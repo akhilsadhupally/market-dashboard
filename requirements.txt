@@ -3,3 +3,4 @@ yfinance
 vaderSentiment
 pandas
 requests
+plotly
