@@ -14,6 +14,7 @@ st.set_page_config(page_title="Akhil's Pro Dashboard", page_icon="🇮🇳", lay
 @st.cache_data(ttl=300)
 def get_stock_data(symbol):
     # FIX: Twelve Data wants "TATASTEEL", not "TATASTEEL.NS"
+    # This line removes the .NS if the user types it
     clean_symbol = symbol.replace(".NS", "")
     
     # We specify "&exchange=NSE" to make sure we get the Indian version
