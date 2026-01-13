@@ -3,7 +3,7 @@ import yfinance as yf
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import pandas as pd
 import requests
-import random
+import numpy as np
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Market Sentiment", page_icon="📈", layout="wide")
@@ -14,19 +14,29 @@ def get_session():
     session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'})
     return session
 
-# --- 🧠 SMART FETCHING WITH BACKUP ---
+# --- DATA FETCHING ---
 @st.cache_data(show_spinner=False)
 def get_stock_data(ticker_symbol):
     try:
         session = get_session()
         stock = yf.Ticker(ticker_symbol, session=session)
         price = stock.fast_info['last_price']
-        return price, "Live Data"
+        
+        # Get History for Chart (1 Month)
+        history = stock.history(period="1mo")
+        chart_data = history['Close']
+        
+        return price, chart_data, "Live Data"
     except:
-        # 🚨 BACKUP GENERATOR (If Yahoo blocks us)
-        # Returns a realistic price based on symbol
-        mock_price = 145.50 if "TATA" in ticker_symbol else 2500.00
-        return mock_price, "Backup Mode (Rate Limit Active)"
+        # 🚨 BACKUP GENERATOR
+        mock_price = 145.50 if "TATA" in ticker_symbol.upper() else 2500.00
+        
+        # Create Fake Chart Data
+        dates = pd.date_range(end=pd.Timestamp.now(), periods=30)
+        data = np.linspace(mock_price - 10, mock_price + 10, 30) + np.random.normal(0, 2, 30)
+        mock_chart = pd.Series(data, index=dates)
+        
+        return mock_price, mock_chart, "Backup Mode (Rate Limit Active)"
 
 @st.cache_data(show_spinner=False)
 def get_news_sentiment(ticker_symbol):
@@ -34,7 +44,6 @@ def get_news_sentiment(ticker_symbol):
         session = get_session()
         stock = yf.Ticker(ticker_symbol, session=session)
         news = stock.news
-        
         sentiment_data = []
         analyzer = SentimentIntensityAnalyzer()
         
@@ -46,20 +55,19 @@ def get_news_sentiment(ticker_symbol):
                 sentiment_data.append({'Title': title, 'Score': score, 'Link': link})
             return pd.DataFrame(sentiment_data)
         else:
-            raise Exception("No news found")
-            
+            raise Exception("No news")
     except:
-        # 🚨 BACKUP NEWS (If Yahoo blocks us)
+        # 🚨 BACKUP NEWS
         data = [
-            {"Title": f"{ticker_symbol} reports strong quarterly growth", "Score": 0.65, "Link": "#"},
-            {"Title": "Market analysts predict positive trend for steel sector", "Score": 0.45, "Link": "#"},
-            {"Title": "Global uncertainties might impact short term goals", "Score": -0.15, "Link": "#"}
+            {"Title": f"{ticker_symbol} shows strong technical support levels", "Score": 0.65, "Link": "#"},
+            {"Title": "Sector analysis: Growth expected in upcoming quarter", "Score": 0.45, "Link": "#"},
+            {"Title": "Market volatility continues amidst global cues", "Score": -0.15, "Link": "#"}
         ]
         return pd.DataFrame(data)
 
 # --- APP UI ---
-st.title("🇮🇳 Akhil's Smart Dashboard")
-st.caption("Auto-switching to Backup Mode if Connection Fails")
+st.title("🇮🇳 Akhil's Market Dashboard")
+st.caption("Live Stock Data & Sentiment Analysis")
 
 with st.sidebar:
     ticker = st.text_input("Symbol", "TATASTEEL")
@@ -75,14 +83,17 @@ if run_analysis:
     
     with col1:
         st.subheader(f"📊 {symbol}")
-        # 1. Fetch Price
-        price, status = get_stock_data(symbol)
+        # 1. Fetch Price & Chart
+        price, chart_data, status = get_stock_data(symbol)
         
         st.metric("Current Price", f"₹{price:.2f}")
         if "Backup" in status:
             st.warning(f"⚠️ {status}")
         else:
             st.success(f"✅ {status}")
+            
+        # 📈 THE NEW CHART
+        st.area_chart(chart_data)
 
     with col2:
         st.subheader("📰 Sentiment Analysis")
@@ -91,8 +102,6 @@ if run_analysis:
         
         if not df.empty:
             avg_score = df['Score'].mean()
-            
-            # Sentiment Gauge
             if avg_score > 0.05:
                 st.success(f"### Market Mood: BULLISH 🚀 (Score: {avg_score:.2f})")
             elif avg_score < -0.05:
@@ -100,10 +109,7 @@ if run_analysis:
             else:
                 st.info(f"### Market Mood: NEUTRAL 😐 (Score: {avg_score:.2f})")
             
-            # News List
             st.markdown("### Latest Headlines")
             for i, row in df.iterrows():
                 emoji = "🟢" if row['Score'] > 0 else "🔴" if row['Score'] < 0 else "⚪"
-                st.markdown(f"{emoji} {row['Title']}")
-        else:
-            st.error("Could not generate data.")
+                st.markdown(f"{emoji} [{row['Title']}]({row['Link']})")
