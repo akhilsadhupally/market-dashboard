@@ -1,129 +1,126 @@
 import streamlit as st
-import yfinance as yf
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import pandas as pd
 import requests
-import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Market Sentiment", page_icon="📈", layout="wide")
+# --- 🔐 CONFIGURATION ---
+# 👇 PASTE YOUR KEY INSIDE THESE QUOTES 👇
+API_KEY = "8a6b36ff930547d9bc06d75c20a8ee77" 
 
-# --- CUSTOM SESSION ---
-def get_session():
-    session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'})
-    return session
+st.set_page_config(page_title="Akhil's Pro Dashboard", page_icon="🇮🇳", layout="wide")
 
-# --- DATA FETCHING ---
-@st.cache_data(show_spinner=False)
-def get_stock_data(ticker_symbol):
+# --- 📡 REAL DATA ENGINE ---
+@st.cache_data(ttl=300)
+def get_stock_data(symbol):
+    # Twelve Data uses .NS for Indian stocks (e.g., TATASTEEL.NS)
+    # We fetch 30 days of data for the chart
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1day&outputsize=30&apikey={API_KEY}"
+    
     try:
-        session = get_session()
-        stock = yf.Ticker(ticker_symbol, session=session)
+        response = requests.get(url).json()
         
-        # Get History for Chart (3 Months for better view)
-        history = stock.history(period="3mo")
-        
-        # Get current price
-        price = history['Close'].iloc[-1]
-        
-        return price, history, "Live Data"
-    except:
-        # 🚨 BACKUP GENERATOR (Simulates OHLC Data for Candles)
-        mock_price = 145.50 if "TATA" in ticker_symbol.upper() else 2500.00
-        
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=60)
-        # Generate fake Open, High, Low, Close
-        base = np.linspace(mock_price - 20, mock_price + 20, 60)
-        noise = np.random.normal(0, 2, 60)
-        
-        df = pd.DataFrame(index=dates)
-        df['Close'] = base + noise
-        df['Open'] = df['Close'].shift(1).fillna(df['Close'])
-        df['High'] = df[['Open', 'Close']].max(axis=1) + abs(np.random.normal(0, 1, 60))
-        df['Low'] = df[['Open', 'Close']].min(axis=1) - abs(np.random.normal(0, 1, 60))
-        
-        return mock_price, df, "Backup Mode (Rate Limit Active)"
+        # Check if the API gave us an error
+        if 'code' in response and response['code'] == 400:
+            return None, None, "Error"
+            
+        # Parse the data
+        if 'values' in response:
+            df = pd.DataFrame(response['values'])
+            df['datetime'] = pd.to_datetime(df['datetime'])
+            # Convert text numbers to real numbers
+            for col in ['open', 'high', 'low', 'close']:
+                df[col] = df[col].astype(float)
+                
+            current_price = df['close'].iloc[0] # The first row is the newest data
+            return current_price, df, "Success"
+            
+    except Exception as e:
+        return None, None, "Error"
+    
+    return None, None, "Error"
 
-@st.cache_data(show_spinner=False)
-def get_news_sentiment(ticker_symbol):
-    try:
-        session = get_session()
-        stock = yf.Ticker(ticker_symbol, session=session)
-        news = stock.news
-        sentiment_data = []
-        analyzer = SentimentIntensityAnalyzer()
-        
-        if news:
-            for item in news:
-                title = item.get('title', '')
-                link = item.get('link', '#')
+# --- 📰 NEWS ENGINE ---
+@st.cache_data(ttl=1800)
+def get_news(symbol_query):
+    # We use RSS feed which is reliable and free
+    url = f"https://news.google.com/rss/search?q={symbol_query}+stock+news+india&hl=en-IN&gl=IN&ceid=IN:en"
+    response = requests.get(url)
+    
+    # Simple XML parsing to find titles and links
+    items = response.text.split('<item>')[1:6] # Get top 5 stories
+    news_data = []
+    analyzer = SentimentIntensityAnalyzer()
+    
+    for item in items:
+        try:
+            if '<title>' in item and '<link>' in item:
+                title = item.split('<title>')[1].split('</title>')[0]
+                link = item.split('<link>')[1].split('</link>')[0]
                 score = analyzer.polarity_scores(title)['compound']
-                sentiment_data.append({'Title': title, 'Score': score, 'Link': link})
-            return pd.DataFrame(sentiment_data)
-        else:
-            raise Exception("No news")
-    except:
-        # 🚨 BACKUP NEWS
-        data = [
-            {"Title": f"{ticker_symbol} technical analysis shows bullish divergence", "Score": 0.65, "Link": "#"},
-            {"Title": "Quarterly results exceed market expectations", "Score": 0.45, "Link": "#"},
-            {"Title": "Sector faces headwinds from global markets", "Score": -0.15, "Link": "#"}
-        ]
-        return pd.DataFrame(data)
+                news_data.append({'Title': title, 'Score': score, 'Link': link})
+        except:
+            continue
+            
+    return pd.DataFrame(news_data)
 
-# --- APP UI ---
-st.title("🇮🇳 Akhil's Pro Dashboard")
-st.caption("Professional Candlestick Analysis")
+# --- 📱 THE DASHBOARD UI ---
+st.title("🇮🇳 Akhil's Live Market Terminal")
+st.markdown("**Status:** Connected to TwelveData API 🟢")
 
 with st.sidebar:
-    ticker = st.text_input("Symbol", "TATASTEEL")
-    if st.button("Run Analysis", type="primary"):
-        run_analysis = True
-    else:
-        run_analysis = False
-
-if run_analysis:
-    symbol = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
+    ticker = st.text_input("Enter Symbol", "TATASTEEL")
+    st.caption("Examples: TATASTEEL, RELIANCE, INFY")
     
-    col1, col2 = st.columns([2, 1]) # Make Chart column wider
+    if st.button("Fetch Live Data", type="primary"):
+        run_app = True
+    else:
+        run_app = False
+
+if run_app:
+    # Ensure it has .NS for India
+    clean_symbol = ticker.upper().replace(".NS", "").strip()
+    search_symbol = f"{clean_symbol}.NS"
+    
+    col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader(f"📊 {symbol} Price Action")
-        # 1. Fetch Data
-        price, history, status = get_stock_data(symbol)
+        st.subheader(f"📊 {search_symbol}")
         
-        st.metric("Current Price", f"₹{price:.2f}")
-        if "Backup" in status:
-            st.warning(f"⚠️ {status}")
+        with st.spinner("Connecting to Satellite..."):
+            price, history, status = get_stock_data(search_symbol)
         
-        # 🕯️ PRO CANDLESTICK CHART 🕯️
-        fig = go.Figure(data=[go.Candlestick(x=history.index,
-                        open=history['Open'],
-                        high=history['High'],
-                        low=history['Low'],
-                        close=history['Close'])])
-        
-        fig.update_layout(xaxis_rangeslider_visible=False, height=400)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col2:
-        st.subheader("📰 Market Mood")
-        # 2. Fetch News
-        df = get_news_sentiment(symbol)
-        
-        if not df.empty:
-            avg_score = df['Score'].mean()
-            if avg_score > 0.05:
-                st.success(f"### BULLISH 🚀\nScore: {avg_score:.2f}")
-            elif avg_score < -0.05:
-                st.error(f"### BEARISH 📉\nScore: {avg_score:.2f}")
-            else:
-                st.info(f"### NEUTRAL 😐\nScore: {avg_score:.2f}")
+        if status == "Error":
+            st.error(f"❌ Could not find '{search_symbol}'. Check spelling or API Key.")
+        else:
+            st.metric("Live Price", f"₹{price:,.2f}")
             
-            st.markdown("---")
-            st.markdown("**Latest News:**")
-            for i, row in df.iterrows():
+            # Draw Real Chart with Plotly
+            if history is not None:
+                fig = go.Figure(data=[go.Candlestick(x=history['datetime'],
+                                open=history['open'],
+                                high=history['high'],
+                                low=history['low'],
+                                close=history['close'])])
+                fig.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0))
+                st.plotly_chart(fig, use_container_width=True)
+                
+    with col2:
+        st.subheader("📰 AI Sentiment")
+        news_df = get_news(clean_symbol)
+        
+        if not news_df.empty:
+            avg_score = news_df['Score'].mean()
+            
+            if avg_score > 0.05:
+                st.success(f"BULLISH 🚀 ({avg_score:.2f})")
+            elif avg_score < -0.05:
+                st.error(f"BEARISH 📉 ({avg_score:.2f})")
+            else:
+                st.info(f"NEUTRAL 😐 ({avg_score:.2f})")
+                
+            for i, row in news_df.iterrows():
                 emoji = "🟢" if row['Score'] > 0 else "🔴" if row['Score'] < 0 else "⚪"
                 st.markdown(f"{emoji} [{row['Title']}]({row['Link']})")
+        else:
+            st.warning("No recent news found.")
