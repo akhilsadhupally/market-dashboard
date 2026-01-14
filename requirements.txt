@@ -3,7 +3,7 @@ yfinance
 pandas
 plotly
 requests
-mftool             
-beautifulsoup4     
-transformers       
-torch             
+mftool
+beautifulsoup4
+deprecated
+vaderSentiment
