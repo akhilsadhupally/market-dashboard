@@ -39,8 +39,29 @@ stock_df = load_stock_data()
 # 1. IPO ENGINE (Scraper + News)
 @st.cache_data(ttl=3600)
 def get_ipo_gmp():
-   # --- 🆕 PASTE THIS RIGHT AFTER get_ipo_gmp() ENDS ---
+    url = "https://www.investorgain.com/report/live-ipo-gmp/331/"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        table = soup.find('table', {'class': 'table'})
+        data = []
+        rows = table.find_all('tr')[1:]
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) > 3:
+                ipo_name = cols[0].text.strip()
+                gmp = cols[3].text.strip()
+                try:
+                    gmp_val = float(gmp.replace('₹', '').replace(',', ''))
+                except:
+                    gmp_val = 0
+                data.append({'IPO Name': ipo_name, 'GMP': gmp_val, 'Status': cols[2].text.strip()})
+        return pd.DataFrame(data)
+    except:
+        return pd.DataFrame()
 
+# --- NEW FUNCTION CORRECTLY PLACED HERE ---
 @st.cache_data(ttl=1800)
 def get_ipo_subscription_status():
     url = "https://www.chittorgarh.com/report/ipo-subscription-status-live-bidding-data-bse-nse/21/"
@@ -253,6 +274,7 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
 
 
 
