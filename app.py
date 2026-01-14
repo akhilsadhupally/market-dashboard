@@ -39,28 +39,30 @@ stock_df = load_stock_data()
 # 1. IPO ENGINE (Scraper + News)
 @st.cache_data(ttl=3600)
 def get_ipo_gmp():
-    url = "https://www.investorgain.com/report/live-ipo-gmp/331/"
+   # --- 🆕 PASTE THIS RIGHT AFTER get_ipo_gmp() ENDS ---
+
+@st.cache_data(ttl=1800)
+def get_ipo_subscription_status():
+    url = "https://www.chittorgarh.com/report/ipo-subscription-status-live-bidding-data-bse-nse/21/"
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         response = requests.get(url, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table', {'class': 'table'})
+        table = soup.find('table', {'class': 'table-bordered'})
+        rows = table.find_all('tr')[1:] 
         data = []
-        rows = table.find_all('tr')[1:]
         for row in rows:
             cols = row.find_all('td')
-            if len(cols) > 3:
-                ipo_name = cols[0].text.strip()
-                gmp = cols[3].text.strip()
-                try:
-                    gmp_val = float(gmp.replace('₹', '').replace(',', ''))
-                except:
-                    gmp_val = 0
-                data.append({'IPO Name': ipo_name, 'GMP': gmp_val, 'Status': cols[2].text.strip()})
+            if len(cols) > 5:
+                # Extract columns: Company, QIB, NII, Retail, Total
+                data.append({
+                    "IPO Name": cols[0].text.strip(),
+                    "Retail (x)": float(cols[4].text.replace('x', '').replace(',', '').strip() or 0),
+                    "Total Subscription (x)": float(cols[6].text.replace('x', '').replace(',', '').strip() or 0)
+                })
         return pd.DataFrame(data)
-    except:
+    except Exception as e:
         return pd.DataFrame()
-
 # 2. MUTUAL FUND ENGINE (Smart Search)
 @st.cache_data(ttl=86400) # Cache list for 24 hours
 def get_all_schemes():
@@ -172,39 +174,49 @@ if page == "📈 Equity Research":
 
 # --- PAGE 2: IPO ---
 elif page == "🚀 IPO & GMP":
-    st.title("IPO Scanner")
+    st.title("🚀 IPO Intelligence Dashboard")
     
-    # 1. LIVE GMP TABLE
-    st.subheader("Live Grey Market Premium (GMP)")
-    with st.spinner("Scraping market..."):
-        gmp_df = get_ipo_gmp()
-        
-    if not gmp_df.empty:
-        # Show top 5 hottest
-        gmp_df = gmp_df.sort_values(by='GMP', ascending=False)
-        st.dataframe(gmp_df.head(10), hide_index=True, use_container_width=True)
-    else:
-        st.warning("Could not fetch GMP data.")
-        
-    st.markdown("---")
+    # Create Tabs: One for Prices (GMP), One for Demand (Subscription)
+    tab1, tab2 = st.tabs(["💰 Grey Market Premium (GMP)", "📊 Live Subscription Status"])
     
-    # 2. SENTIMENT SEARCH
-    st.subheader("Check IPO Sentiment")
-    ipo_search = st.text_input("Enter IPO Name to check buzz (e.g., Hyundai)", "Hyundai")
-    
-    if st.button("Check Buzz"):
-        news = get_ai_sentiment(f"{ipo_search} IPO GMP subscription")
-        if not news.empty:
-            avg = news['Score'].mean()
-            st.metric("Buzz Score", f"{avg:.2f}", delta="High Hype" if avg > 0.1 else "Low Hype")
+    # --- TAB 1: PRICES ---
+    with tab1:
+        st.subheader("Market Expectations (GMP)")
+        with st.spinner("Fetching latest GMP..."):
+            gmp_df = get_ipo_gmp() # Calls your existing function
             
-            # Heatmap Chart
-            fig = px.bar(news, x=news.index, y='Score', color='Score', 
-                         color_continuous_scale=['red', 'yellow', 'green'], title="Sentiment Intensity")
-            st.plotly_chart(fig, use_container_width=True)
+        if not gmp_df.empty:
+            # Add status colors
+            st.dataframe(gmp_df, use_container_width=True, hide_index=True)
         else:
-            st.warning("No recent news found for this IPO.")
+            st.warning("Could not fetch GMP data.")
 
+    # --- TAB 2: DEMAND (New Feature) ---
+    with tab2:
+        st.subheader("Real-Time Bidding Status")
+        st.caption("Retail (x) = How many times the public applied for 1 share.")
+        
+        with st.spinner("Checking subscription levels..."):
+            sub_df = get_ipo_subscription_status() # Calls the NEW function you added in Step 1
+            
+        if not sub_df.empty:
+            # Highlight Hot IPOs
+            st.dataframe(
+                sub_df,
+                column_config={
+                    "IPO Name": st.column_config.TextColumn("Company"),
+                    "Retail (x)": st.column_config.ProgressColumn(
+                        "Retail Interest", 
+                        format="%.2fx",
+                        min_value=0, max_value=50, # Sets the progress bar scale
+                    ),
+                    "Total Subscription (x)": st.column_config.NumberColumn("Total Demand", format="%.2fx")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+        else:
+            st.error("Could not fetch Subscription data.")
 # --- PAGE 3: MUTUAL FUNDS ---
 elif page == "💰 Mutual Funds":
     st.title("Mutual Fund Analyzer")
@@ -241,5 +253,6 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
 
 
