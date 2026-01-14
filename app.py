@@ -58,14 +58,12 @@ stock_df = load_stock_data()
 
 
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
-
-# 1. IPO ENGINE (Stealth Version)
+# 1. IPO ENGINE (Broad Search Version)
 @st.cache_data(ttl=1800)
 def get_ipo_dashboard_data():
-    # 1. THE TRICK: Use headers that look exactly like a real Chrome browser
+    # 1. Headers to mimic a browser
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Referer": "https://www.google.com/"
     }
     
@@ -74,17 +72,37 @@ def get_ipo_dashboard_data():
     try:
         r = requests.get(url, headers=headers)
         
-        # 2. Read tables using 'lxml' (Fastest & most robust)
-        dfs = pd.read_html(r.text, match="IPO", flavor='lxml')
-        
+        # 2. Grab ALL tables (Removed 'match="IPO"' to avoid the regex error)
+        # We try 'lxml' first, then default if that fails
+        try:
+            dfs = pd.read_html(r.text, flavor='lxml')
+        except:
+            dfs = pd.read_html(r.text) # Fallback to default parser
+            
         if not dfs:
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
             
-        df = dfs[0] 
+        # 3. Find the Right Table (The "Smart" Loop)
+        target_df = None
+        for df in dfs:
+            # We look for a table that has "GMP" and "Price" in its columns
+            # This is safer than looking for "IPO" text
+            col_str = str(df.columns).lower()
+            if 'gmp' in col_str and 'price' in col_str:
+                target_df = df
+                break
         
-        # 3. CLEANUP 
-        # Select columns by Index: 0=Name, 2=Price, 5=GMP, 7=Date
-        df = df.iloc[:, [0, 2, 5, 7]] 
+        # If we still didn't find it, just grab the largest table as a guess
+        if target_df is None:
+            target_df = max(dfs, key=len)
+            
+        # 4. CLEANUP (Standardize Columns)
+        # We select columns by INDEX to be safe (0=Name, 2=Price, 5=GMP, 7=Date)
+        # Ensure the table is wide enough before slicing
+        if target_df.shape[1] < 8:
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        df = target_df.iloc[:, [0, 2, 5, 7]] 
         df.columns = ['IPO Name', 'Price', 'GMP', 'Date']
         
         def clean_gmp(val):
@@ -95,15 +113,15 @@ def get_ipo_dashboard_data():
                 
         df['GMP'] = df['GMP'].apply(clean_gmp)
         
-        # 4. SORTING
+        # 5. SORTING
         open_mask = df['Date'].astype(str).str.contains('to', case=False, na=False)
         upcoming_mask = df['Date'].astype(str).str.contains('Upcoming', case=False, na=False)
         
         return df[open_mask], df[upcoming_mask], df[~open_mask & ~upcoming_mask]
 
     except Exception as e:
-        # Fallback if blocked
-        st.error(f"❌ Connection Error: {e}")
+        # Debugging: Print the error to the UI so we see why it failed
+        st.error(f"❌ Scraping Error: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 # 2. MUTUAL FUND ENGINE
 @st.cache_data(ttl=86400)
@@ -295,6 +313,7 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
 
 
 
