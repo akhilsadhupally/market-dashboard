@@ -14,25 +14,36 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 # --- 🎨 CONFIGURATION ---
 st.set_page_config(page_title="InvestRight.AI", page_icon="🦁", layout="wide")
 # --- 🛠️ LOAD MASTER STOCK LIST (New Feature) ---
+# --- 🛠️ LOAD MASTER STOCK LIST (Debug Version) ---
 @st.cache_data
 def load_stock_data():
     try:
-        # Load the CSV file you saved
+        # 1. Try loading the file
         df = pd.read_csv('stocks.csv')
         
-        # Clean up column names (remove extra spaces)
+        # 2. Clean names
         df.columns = df.columns.str.strip()
         
-        # Create a "Search Label" so users see "TATASTEEL - Tata Steel Ltd"
-        # Adjust column names 'SYMBOL' or 'NAME OF COMPANY' if your CSV is slightly different
-        df['Search_Label'] = df['SYMBOL'] + " - " + df['NAME OF COMPANY']
-        
+        # 3. Create Search Label
+        # Check if 'SYMBOL' column exists, otherwise try 'Symbol' (case sensitive)
+        if 'SYMBOL' in df.columns:
+            df['Search_Label'] = df['SYMBOL'] + " - " + df['NAME OF COMPANY']
+        elif 'Symbol' in df.columns: # Handle case sensitivity
+            df['Search_Label'] = df['Symbol'] + " - " + df['Company Name']
+        else:
+            st.error("CSV Loaded but columns 'SYMBOL' or 'NAME OF COMPANY' not found!")
+            st.write("Columns found:", df.columns.tolist())
+            return pd.DataFrame()
+            
         return df
+    except FileNotFoundError:
+        st.error("❌ Critical Error: 'stocks.csv' file not found in the project folder.")
+        return pd.DataFrame()
     except Exception as e:
-        # If file is missing, return empty so app doesn't crash
+        st.error(f"❌ Error loading file: {e}")
         return pd.DataFrame()
 
-# Load data once when app starts
+# Load data
 stock_df = load_stock_data()
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
 
@@ -197,49 +208,47 @@ if page == "📈 Equity Research":
 
 # --- PAGE 2: IPO ---
 elif page == "🚀 IPO & GMP":
-    st.title("🚀 IPO Intelligence Dashboard")
+   elif page == "🚀 IPO & GMP":
+    st.title("🚀 IPO Intelligence")
     
-    # Create Tabs: One for Prices (GMP), One for Demand (Subscription)
-    tab1, tab2 = st.tabs(["💰 Grey Market Premium (GMP)", "📊 Live Subscription Status"])
-    
-    # --- TAB 1: PRICES ---
-    with tab1:
-        st.subheader("Market Expectations (GMP)")
-        with st.spinner("Fetching latest GMP..."):
-            gmp_df = get_ipo_gmp() # Calls your existing function
-            
-        if not gmp_df.empty:
-            # Add status colors
-            st.dataframe(gmp_df, use_container_width=True, hide_index=True)
-        else:
-            st.warning("Could not fetch GMP data.")
+    # 1. Call the NEW function name
+    with st.spinner("Scanning Market for Active IPOs..."):
+        open_df, upcoming_df, closed_df = get_ipo_dashboard_data()
 
-    # --- TAB 2: DEMAND (New Feature) ---
-    with tab2:
-        st.subheader("Real-Time Bidding Status")
-        st.caption("Retail (x) = How many times the public applied for 1 share.")
-        
-        with st.spinner("Checking subscription levels..."):
-            sub_df = get_ipo_subscription_status() # Calls the NEW function you added in Step 1
-            
-        if not sub_df.empty:
-            # Highlight Hot IPOs
-            st.dataframe(
-                sub_df,
-                column_config={
-                    "IPO Name": st.column_config.TextColumn("Company"),
-                    "Retail (x)": st.column_config.ProgressColumn(
-                        "Retail Interest", 
-                        format="%.2fx",
-                        min_value=0, max_value=50, # Sets the progress bar scale
-                    ),
-                    "Total Subscription (x)": st.column_config.NumberColumn("Total Demand", format="%.2fx")
-                },
-                hide_index=True,
-                use_container_width=True
-            )
+    # --- SECTION 1: LIVE & OPEN (Top Priority) ---
+    st.header("🟢 Open Now / Active")
+    if not open_df.empty:
+        st.caption("Currently bidding or listing soon.")
+        st.dataframe(
+            open_df,
+            hide_index=True,
+            use_container_width=True
+        )
+    else:
+        st.info("No active IPOs open for bidding today.")
+
+    st.markdown("---")
+
+    # --- SECTION 2: UPCOMING (Future) ---
+    st.header("📅 Upcoming")
+    if not upcoming_df.empty:
+        st.caption("Watchlist for next week.")
+        st.dataframe(
+            upcoming_df,
+            hide_index=True,
+            use_container_width=True
+        )
+    else:
+        st.info("No upcoming IPO dates announced yet.")
+
+    st.markdown("---")
+
+    # --- SECTION 3: RECENTLY CLOSED (History) ---
+    with st.expander("Show Recently Closed IPOs (History)"):
+        if not closed_df.empty:
+            st.dataframe(closed_df.head(10), hide_index=True, use_container_width=True)
         else:
-            st.error("Could not fetch Subscription data.")
+            st.write("No data available.")
 # --- PAGE 3: MUTUAL FUNDS ---
 elif page == "💰 Mutual Funds":
     st.title("Mutual Fund Analyzer")
@@ -276,6 +285,7 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
 
 
 
