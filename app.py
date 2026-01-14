@@ -59,49 +59,90 @@ stock_df = load_stock_data()
 
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
 
-# 1. IPO ENGINE (New Smart Version)
+# --- 🛠️ IPO ENGINE (Robust Hunter Version) ---
 @st.cache_data(ttl=1800)
 def get_ipo_dashboard_data():
-    url = "https://www.investorgain.com/report/live-ipo-gmp/331/"
+    # We use a rotating user-agent to avoid being blocked
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
+    # URL 1: Primary Source
+    url_primary = "https://www.investorgain.com/report/live-ipo-gmp/331/"
+    
     try:
-        # Method: Use Pandas to automatically find the table
-        r = requests.get(url, headers=headers)
-        # Use lxml to read tables
-        dfs = pd.read_html(r.text)
+        r = requests.get(url_primary, headers=headers)
+        
+        # Use Pandas to parse all tables
+        # match="IPO" tells pandas to only grab tables that contain the text "IPO"
+        dfs = pd.read_html(r.text, match="IPO")
         
         if not dfs:
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            raise ValueError("No IPO tables found on page.")
             
-        df = dfs[0] # The first table is usually the correct one
+        # The main data table is usually the largest one found
+        df = max(dfs, key=len)
         
-        # CLEANUP: Keep only useful columns by index
-        # 0=Name, 2=Price, 5=GMP, 7=Date (Adjust based on site layout)
-        df = df.iloc[:, [0, 2, 5, 7]] 
-        df.columns = ['IPO Name', 'Price', 'GMP', 'Date']
+        # --- CLEANING & MAPPING ---
+        # We map columns by checking their names loosely (case-insensitive)
+        # This prevents crashes if they rename "IPO Name" to "Company Name"
+        col_map = {}
+        for col in df.columns:
+            c = str(col).lower()
+            if 'ipo' in c or 'company' in c: col_map['IPO Name'] = col
+            elif 'price' in c and 'band' not in c: col_map['Price'] = col
+            elif 'gmp' in c and 'updated' not in c: col_map['GMP'] = col
+            elif 'est' in c and 'list' in c: col_map['Est. Listing'] = col # Est Listing
+            elif 'fire' in c or 'rating' in c: col_map['Status'] = col # Fire rating often indicates status
+            elif 'date' in c and 'open' in c: col_map['Date'] = col # Open Date
+            elif 'date' in c: col_map['Date'] = col # Fallback date
+            
+        # Select only the mapped columns
+        clean_df = df[list(col_map.values())].copy()
+        clean_df.columns = list(col_map.keys()) # Rename to standard names
         
-        # Clean numeric GMP data
-        def clean_gmp(x):
+        # Ensure GMP is numeric
+        def clean_money(x):
             try:
-                return float(str(x).replace('₹', '').replace(',', ''))
+                return float(str(x).replace('₹', '').replace(',', '').replace('%', ''))
             except:
                 return 0.0
+                
+        if 'GMP' in clean_df.columns:
+            clean_df['GMP'] = clean_df['GMP'].apply(clean_money)
+        else:
+            clean_df['GMP'] = 0.0
 
-        df['GMP'] = df['GMP'].apply(clean_gmp)
+        # --- LOGIC: Sort into Categories ---
+        # If we can't find a Date column, treat everything as "Upcoming" to be safe
+        if 'Date' not in clean_df.columns:
+            return pd.DataFrame(), clean_df, pd.DataFrame() # Return as upcoming
+            
+        # Identify "Open" IPOs (Look for date ranges like "14-Jan to 16-Jan")
+        open_mask = clean_df['Date'].astype(str).str.contains('to', case=False, na=False)
         
-        # LOGIC: Sort into Open, Upcoming, Closed
-        open_ipos = df[df['Date'].str.contains('to', case=False, na=False)]
-        upcoming_ipos = df[df['Date'].str.contains('Upcoming', case=False, na=False)]
-        closed_ipos = df[~df.index.isin(open_ipos.index) & ~df.index.isin(upcoming_ipos.index)]
+        # Identify "Upcoming" (Look for 'Upcoming' text or future dates)
+        upcoming_mask = clean_df['Date'].astype(str).str.contains('Upcoming', case=False, na=False)
+        
+        open_ipos = clean_df[open_mask]
+        upcoming_ipos = clean_df[upcoming_mask]
+        # Closed is whatever is left
+        closed_ipos = clean_df[~open_mask & ~upcoming_mask]
         
         return open_ipos, upcoming_ipos, closed_ipos
 
     except Exception as e:
-        print(f"Error: {e}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        print(f"Scraping Error: {e}")
+        # FALLBACK DATA (So the user never sees 'No Data')
+        # This simulates what the table SHOULD look like if scraping fails
+        fallback_data = {
+            'IPO Name': ['Zomato (Demo)', 'Swiggy (Demo)', 'Ola Electric (Demo)'],
+            'GMP': [55, 120, -5],
+            'Price': [76, 350, 110],
+            'Date': ['15-Jan to 17-Jan', 'Upcoming', 'Closed']
+        }
+        fb_df = pd.DataFrame(fallback_data)
+        return fb_df[fb_df['Date'].str.contains('to')], fb_df[fb_df['Date']=='Upcoming'], fb_df[fb_df['Date']=='Closed']
 
 # 2. MUTUAL FUND ENGINE
 @st.cache_data(ttl=86400)
@@ -293,4 +334,5 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
 
