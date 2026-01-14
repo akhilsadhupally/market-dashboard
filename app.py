@@ -48,64 +48,61 @@ stock_df = load_stock_data()
 
 
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
-# 1. IPO ENGINE (Google Sheet Bridge - 100% Reliable)
+# 1. IPO ENGINE (Google Sheet Bridge)
 @st.cache_data(ttl=300)
 def get_ipo_dashboard_data():
     try:
-        # 🟢 OPTION A: Replace this URL with YOUR Google Sheet CSV link from Step 1
-        # This is a public backup sheet I created for you so it works immediately:
-        sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR_sMbdWqK1O4y-Ks_AIPs7pf_X59qWl3xHnJg2V91IMn7W9yZt_HghZjM9DkCN8ZPm8Nq40K5-1yXz/pub?output=csv"
+        # 🟢 YOUR LINK IS INSERTED HERE 👇
+        sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSrY-WLkphYTFIp9FffqR_WfXE_Ta9E0SId-pKqF10ZaUXTZEW1rHY96ilINOkrA6IDaASwWiQl9TMI/pub?output=csv"
         
         # Read the CSV directly
         df = pd.read_csv(sheet_url)
         
-        # --- CLEANUP (Standardize Columns) ---
-        # The sheet columns usually come in as "IPO Name", "Price", "GMP(Rs)", etc.
-        # We rename them to be safe
+        # --- CLEANUP ---
+        # Normalize columns (lowercase) to avoid case errors
         df.columns = [c.lower() for c in df.columns]
         
         new_df = pd.DataFrame()
-        new_df['IPO Name'] = df.iloc[:, 0] # 1st column is always Name
-        new_df['Price'] = df.iloc[:, 1]    # 2nd is Price
-        new_df['GMP'] = df.iloc[:, 2]      # 3rd is GMP
         
+        # Map columns dynamically (Find 'name', 'price', 'gmp')
+        # We look for columns containing these keywords
+        col_name = next((c for c in df.columns if 'ipo' in c or 'company' in c), None)
+        col_price = next((c for c in df.columns if 'price' in c), None)
+        col_gmp = next((c for c in df.columns if 'gmp' in c or 'premium' in c), None)
+        
+        if not col_name: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        
+        new_df['IPO Name'] = df[col_name]
+        new_df['Price'] = df[col_price] if col_price else "N/A"
+        new_df['GMP'] = df[col_gmp] if col_gmp else 0
+
         # Clean GMP Values
         def clean_gmp(val):
             try:
-                # Remove '₹', commas, and text like '(Subject to)'
-                clean = str(val).split('(')[0].replace('₹', '').replace(',', '').strip()
+                # Remove '₹', commas, percentages
+                clean = str(val).split('(')[0].replace('₹', '').replace(',', '').replace('%', '').strip()
                 return float(clean)
             except:
                 return 0.0
         
         new_df['GMP_Value'] = new_df['GMP'].apply(clean_gmp)
         
-        # Create 'Status' based on GMP
-        # If GMP > 0, we treat it as Active/Upcoming
+        # SORT: Highest GMP first
         new_df = new_df.sort_values(by='GMP_Value', ascending=False)
         
-        # --- SPLIT DATA ---
-        # Logic: Top 10 by GMP are "Hot/Active", rest are "Upcoming/Closed"
-        # This is a safe approximation since we can't scrape dates easily
-        
+        # SPLIT into Categories
+        # Top 10 = Active/Hot
         open_ipos = new_df.head(10)
+        # Next 10 = Upcoming
         upcoming_ipos = new_df.iloc[10:20]
+        # Rest = Closed/History
         closed_ipos = new_df.iloc[20:]
         
         return open_ipos, upcoming_ipos, closed_ipos
 
     except Exception as e:
-        # 🔴 FALLBACK: If even the sheet fails, show REAL recent data (Offline Mode)
-        st.warning("⚠️ Live data connection failed. Showing offline cached data.")
-        
-        data = {
-            'IPO Name': ['NTPC Green Energy', 'Zomato', 'Swiggy', 'Hyundai India', 'Waaree Energies'],
-            'Price': ['102-108', '72-76', '371-390', '1865-1960', '1427-1503'],
-            'GMP': ['+5 (Active)', 'Listed', 'Listed', 'Listed', '+850 (Super Hot)'],
-            'GMP_Value': [5, 0, 0, 0, 850]
-        }
-        fb = pd.DataFrame(data)
-        return fb.head(2), fb.iloc[2:3], fb.iloc[3:]
+        st.error(f"❌ Connection Error: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 # 2. MUTUAL FUND ENGINE
 @st.cache_data(ttl=86400)
 def get_all_schemes():
@@ -323,5 +320,6 @@ elif page == "💰 Mutual Funds":
                 st.plotly_chart(fig, use_container_width=True)
                 
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
 
 
