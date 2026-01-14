@@ -48,80 +48,76 @@ stock_df = load_stock_data()
 
 
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
-
-# 1. IPO ENGINE (Source: IPOWatch - Most Reliable for Cloud)
+# 1. IPO ENGINE (Multi-Source Strategy)
 @st.cache_data(ttl=3600)
 def get_ipo_dashboard_data():
-    # Headers to look like a real phone/laptop
+    # Headers to mimic a real user
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Referer": "https://www.google.com/"
     }
-    
-    url = "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"
-    
+
+    # Helper function to clean GMP values
+    def clean_gmp(val):
+        try:
+            return float(str(val).replace('₹', '').replace(',', '').strip())
+        except:
+            return 0.0
+
+    # --- SOURCE 1: IPO Central (Often works on Cloud) ---
     try:
-        r = requests.get(url, headers=headers)
-        if r.status_code != 200:
-            raise ValueError("Blocked by website")
-            
-        # IPOWatch usually has one big table
-        dfs = pd.read_html(r.text)
+        url = "https://www.ipocentral.in/ipo-gmp/"
+        r = requests.get(url, headers=headers, timeout=10)
         
-        if not dfs:
-            raise ValueError("No tables found")
-            
-        df = dfs[0] # Grab the first table
-        
-        # Normalize column names
-        df.columns = [c.lower() for c in df.columns]
-        
-        # Map columns dynamically
-        new_df = pd.DataFrame()
-        new_df['IPO Name'] = df.iloc[:, 0] # First col is always Name
-        
-        # Try to find Price
-        if 'price' in str(df.columns):
-            new_df['Price'] = df[df.columns[df.columns.str.contains('price')][0]]
-        else:
-            new_df['Price'] = df.iloc[:, 1] # Fallback to 2nd col
-
-        # Try to find GMP
-        if 'gmp' in str(df.columns) or 'premium' in str(df.columns):
-            new_df['GMP'] = df[df.columns[df.columns.str.contains('gmp|premium')][0]]
-        else:
-            new_df['GMP'] = df.iloc[:, 2] # Fallback to 3rd col
-            
-        # CLEAN GMP (Remove symbols)
-        def clean_gmp(val):
-            try:
-                # Remove ₹, commas, and (Subject to...) text
-                clean = str(val).split('(')[0].replace('₹', '').replace(',', '').strip()
-                return float(clean)
-            except:
-                return 0.0
-        
-        new_df['GMP_Value'] = new_df['GMP'].apply(clean_gmp)
-        
-        # Create a fake 'Date' column for display
-        new_df['Date'] = "Check Details"
-        
-        # Sort: Highest GMP first
-        new_df = new_df.sort_values(by='GMP_Value', ascending=False)
-        
-        # Split purely for UI layout
-        # Top 5 = "Open / Hot", Next 10 = "Upcoming", Rest = "Closed/Low Interest"
-        open_ipos = new_df.head(5)
-        upcoming_ipos = new_df.iloc[5:15]
-        closed_ipos = new_df.iloc[15:]
-        
-        return open_ipos, upcoming_ipos, closed_ipos
-
+        if r.status_code == 200:
+            dfs = pd.read_html(r.text)
+            if dfs:
+                df = dfs[0]
+                # Cleanup IPO Central columns
+                # usually: [IPO Name, Open, Close, Price, GMP]
+                df.columns = [c.lower() for c in df.columns]
+                
+                new_df = pd.DataFrame()
+                new_df['IPO Name'] = df.iloc[:, 0] # 1st col is name
+                
+                # Find GMP column
+                gmp_col = [c for c in df.columns if 'gmp' in c]
+                if gmp_col:
+                    new_df['GMP'] = df[gmp_col[0]].apply(clean_gmp)
+                else:
+                    new_df['GMP'] = 0.0
+                
+                # Sort and Split
+                new_df = new_df.sort_values(by='GMP', ascending=False)
+                return new_df.head(5), new_df.iloc[5:15], new_df.iloc[15:]
     except Exception as e:
-        # Fallback only if this fails too
-        data = {'IPO Name': ['Zomato (Demo)', 'Swiggy (Demo)'], 'GMP': [10, 50]}
-        fb = pd.DataFrame(data)
-        return fb, pd.DataFrame(), pd.DataFrame()
+        print(f"Source 1 Failed: {e}")
 
+    # --- SOURCE 2: InvestorGain (Backup) ---
+    try:
+        url = "https://www.investorgain.com/report/live-ipo-gmp/331/"
+        r = requests.get(url, headers=headers, timeout=10)
+        
+        if r.status_code == 200:
+            dfs = pd.read_html(r.text, match="IPO")
+            if dfs:
+                df = dfs[0]
+                df = df.iloc[:, [0, 2, 5, 7]] # Index based extraction
+                df.columns = ['IPO Name', 'Price', 'GMP', 'Date']
+                df['GMP'] = df['GMP'].apply(clean_gmp)
+                
+                # Status Logic
+                open_mask = df['Date'].astype(str).str.contains('to', case=False, na=False)
+                upcoming_mask = df['Date'].astype(str).str.contains('Upcoming', case=False, na=False)
+                
+                return df[open_mask], df[upcoming_mask], df[~open_mask & ~upcoming_mask]
+    except Exception as e:
+        print(f"Source 2 Failed: {e}")
+
+    # --- IF ALL FAIL ---
+    # Return empty frames so UI shows "No Data" instead of Fake Demo Data
+    return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 # 2. MUTUAL FUND ENGINE
 @st.cache_data(ttl=86400)
 def get_all_schemes():
@@ -339,3 +335,4 @@ elif page == "💰 Mutual Funds":
                 st.plotly_chart(fig, use_container_width=True)
                 
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
