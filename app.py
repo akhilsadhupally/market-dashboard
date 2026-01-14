@@ -5,49 +5,38 @@ import plotly.graph_objects as go
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 # --- 🔐 CONFIGURATION ---
-# YOUR KEY IS SET BELOW 👇
 API_KEY = "8a6b36ff930547d9bc06d75c20a8ee77"
 
-st.set_page_config(page_title="Akhil's Pro Dashboard", page_icon="🇮🇳", layout="wide")
+st.set_page_config(page_title="Akhil's Market Terminal", page_icon="🇮🇳", layout="wide")
 
-# --- 📡 ROBUST DATA ENGINE (tries 3 methods) ---
-@st.cache_data(ttl=300)
-def get_stock_data(user_input):
-    # Method 1: Clean Symbol + NSE Exchange
-    symbol = user_input.upper().replace(".NS", "").strip()
+# --- 📡 PRECISE DATA ENGINE ---
+def get_stock_data(symbol):
+    # 1. Clean the symbol (Remove .NS because we specify exchange=NSE)
+    clean_symbol = symbol.replace(".NS", "").strip()
     
-    # Try 1: Specific Indian Exchange Request
-    url_1 = f"https://api.twelvedata.com/time_series?symbol={symbol}&exchange=NSE&interval=1day&outputsize=30&apikey={API_KEY}"
+    # 2. The ONE correct URL for Indian Stocks
+    url = f"https://api.twelvedata.com/time_series?symbol={clean_symbol}&exchange=NSE&interval=1day&outputsize=30&apikey={API_KEY}"
     
-    # Try 2: Global Search (Let API decide)
-    url_2 = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=1day&outputsize=30&apikey={API_KEY}"
-    
-    # Try 3: Direct Ticker (e.g. TATASTEEL.NS)
-    url_3 = f"https://api.twelvedata.com/time_series?symbol={symbol}.NS&interval=1day&outputsize=30&apikey={API_KEY}"
+    try:
+        response = requests.get(url)
+        data = response.json()
 
-    for url in [url_1, url_2, url_3]:
-        try:
-            response = requests.get(url).json()
+        # 🚨 DEBUGGER: If it fails, return the EXACT error message from the server
+        if data.get("status") == "error":
+            return None, None, f"Server Said: {data.get('message')}"
+
+        # If success, process data
+        if "values" in data:
+            df = pd.DataFrame(data['values'])
+            df['datetime'] = pd.to_datetime(df['datetime'])
+            for col in ['open', 'high', 'low', 'close']:
+                df[col] = df[col].astype(float)
+            return df['close'].iloc[0], df, "Success"
             
-            # CHECK FOR SPECIFIC ERRORS
-            if 'code' in response and response['code'] != 200:
-                print(f"Attempt failed: {response['message']}")
-                continue # Try next URL
-                
-            if 'values' in response:
-                df = pd.DataFrame(response['values'])
-                df['datetime'] = pd.to_datetime(df['datetime'])
-                for col in ['open', 'high', 'low', 'close']:
-                    df[col] = df[col].astype(float)
-                current_price = df['close'].iloc[0]
-                
-                # Success! Return data
-                return current_price, df, "Success"
-                
-        except Exception as e:
-            continue
-
-    return None, None, "Could not find stock. API Limit or Symbol Error."
+    except Exception as e:
+        return None, None, f"Crash Error: {str(e)}"
+    
+    return None, None, "Unknown Error"
 
 # --- 📰 NEWS ENGINE ---
 @st.cache_data(ttl=1800)
@@ -70,15 +59,13 @@ def get_news(symbol_query):
     except:
         return pd.DataFrame()
 
-# --- 📱 THE DASHBOARD UI ---
-st.title("🇮🇳 Akhil's Live Market Terminal")
+# --- 📱 APP UI ---
+st.title("🇮🇳 Akhil's Live Terminal (Safe Mode)")
 st.caption("Status: Connected to TwelveData API 🟢")
 
 with st.sidebar:
-    ticker = st.text_input("Enter Symbol", "TATASTEEL")
-    st.caption("Try: TATASTEEL, RELIANCE, INFY")
-    
-    if st.button("Fetch Live Data", type="primary"):
+    ticker = st.text_input("Symbol", "TATASTEEL")
+    if st.button("Fetch Data"):
         run_app = True
     else:
         run_app = False
@@ -88,29 +75,25 @@ if run_app:
     
     with col1:
         st.subheader(f"📊 {ticker.upper()}")
-        with st.spinner("Connecting to Satellite..."):
+        with st.spinner("Connecting..."):
             price, history, status = get_stock_data(ticker)
         
         if status != "Success":
-            st.error(f"❌ Error: {status}")
-            st.info("Note: The Free API allows 8 calls/minute. Wait a moment and try again.")
+            # 🛑 This will show us the REAL problem
+            st.error(f"❌ {status}")
+            st.info("💡 If it says 'limit reached', wait 1 minute.")
         else:
             st.metric("Live Price", f"₹{price:,.2f}")
             fig = go.Figure(data=[go.Candlestick(x=history['datetime'],
                             open=history['open'], high=history['high'],
                             low=history['low'], close=history['close'])])
-            fig.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0))
             st.plotly_chart(fig, use_container_width=True)
-                
+
     with col2:
-        st.subheader("📰 AI Sentiment")
+        st.subheader("📰 Sentiment")
         news_df = get_news(ticker)
         if not news_df.empty:
-            avg_score = news_df['Score'].mean()
-            if avg_score > 0.05: st.success(f"BULLISH 🚀 ({avg_score:.2f})")
-            elif avg_score < -0.05: st.error(f"BEARISH 📉 ({avg_score:.2f})")
-            else: st.info(f"NEUTRAL 😐 ({avg_score:.2f})")
-            
+            avg = news_df['Score'].mean()
+            st.info(f"Sentiment Score: {avg:.2f}")
             for i, row in news_df.iterrows():
-                emoji = "🟢" if row['Score'] > 0 else "🔴" if row['Score'] < 0 else "⚪"
-                st.markdown(f"{emoji} [{row['Title']}]({row['Link']})")
+                st.markdown(f"• [{row['Title']}]({row['Link']})")
