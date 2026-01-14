@@ -58,71 +58,78 @@ stock_df = load_stock_data()
 
 
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
-# 1. IPO ENGINE (Broad Search Version)
+# 1. IPO ENGINE (Manual Soup Version - Most Robust)
 @st.cache_data(ttl=1800)
 def get_ipo_dashboard_data():
-    # 1. Headers to mimic a browser
+    # Headers to mimic a real user
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://www.google.com/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "*/*"
     }
     
+    # URL: Investorgain (Primary)
     url = "https://www.investorgain.com/report/live-ipo-gmp/331/"
     
     try:
         r = requests.get(url, headers=headers)
-        
-        # 2. Grab ALL tables (Removed 'match="IPO"' to avoid the regex error)
-        # We try 'lxml' first, then default if that fails
-        try:
-            dfs = pd.read_html(r.text, flavor='lxml')
-        except:
-            dfs = pd.read_html(r.text) # Fallback to default parser
-            
-        if not dfs:
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-            
-        # 3. Find the Right Table (The "Smart" Loop)
-        target_df = None
-        for df in dfs:
-            # We look for a table that has "GMP" and "Price" in its columns
-            # This is safer than looking for "IPO" text
-            col_str = str(df.columns).lower()
-            if 'gmp' in col_str and 'price' in col_str:
-                target_df = df
-                break
-        
-        # If we still didn't find it, just grab the largest table as a guess
-        if target_df is None:
-            target_df = max(dfs, key=len)
-            
-        # 4. CLEANUP (Standardize Columns)
-        # We select columns by INDEX to be safe (0=Name, 2=Price, 5=GMP, 7=Date)
-        # Ensure the table is wide enough before slicing
-        if target_df.shape[1] < 8:
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        if r.status_code != 200:
+            raise ValueError(f"Blocked: Status {r.status_code}")
 
-        df = target_df.iloc[:, [0, 2, 5, 7]] 
-        df.columns = ['IPO Name', 'Price', 'GMP', 'Date']
+        soup = BeautifulSoup(r.text, 'html.parser')
         
-        def clean_gmp(val):
-            try:
-                return float(str(val).replace('₹', '').replace(',', ''))
-            except:
-                return 0.0
+        # Manually find the table (Look for 'table' tag with class 'table')
+        # This bypasses the Pandas 'read_html' error
+        table = soup.find('table', {'class': 'table'})
+        
+        if not table:
+            # Fallback: Try finding ANY table
+            table = soup.find('table')
+            
+        if not table:
+            raise ValueError("No table tags found in HTML.")
+
+        # Extract rows manually
+        data = []
+        rows = table.find_all('tr')[1:] # Skip header row
+        
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) >= 8: # Ensure row has enough data
+                # Extract text safely
+                name = cols[0].text.strip()
+                price = cols[2].text.strip()
+                gmp = cols[5].text.strip()
+                date_str = cols[7].text.strip() # usually column 7 or 8 is date
                 
-        df['GMP'] = df['GMP'].apply(clean_gmp)
+                # Clean GMP (Remove ₹, commas)
+                try:
+                    gmp_val = float(gmp.replace('₹', '').replace(',', ''))
+                except:
+                    gmp_val = 0.0
+                    
+                data.append({
+                    'IPO Name': name,
+                    'Price': price,
+                    'GMP': gmp_val,
+                    'Date': date_str
+                })
         
-        # 5. SORTING
+        df = pd.DataFrame(data)
+        
+        if df.empty:
+             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        # SORTING LOGIC
         open_mask = df['Date'].astype(str).str.contains('to', case=False, na=False)
         upcoming_mask = df['Date'].astype(str).str.contains('Upcoming', case=False, na=False)
         
         return df[open_mask], df[upcoming_mask], df[~open_mask & ~upcoming_mask]
 
     except Exception as e:
-        # Debugging: Print the error to the UI so we see why it failed
-        st.error(f"❌ Scraping Error: {e}")
+        st.error(f"❌ Scraping Failed: {e}")
+        # Return empty DFs so app doesn't crash
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        
 # 2. MUTUAL FUND ENGINE
 @st.cache_data(ttl=86400)
 def get_all_schemes():
@@ -313,6 +320,7 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
 
 
 
