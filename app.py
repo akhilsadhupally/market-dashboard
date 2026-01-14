@@ -1,48 +1,53 @@
 import streamlit as st
-import requests
+import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-# --- 🔐 CONFIGURATION ---
-API_KEY = "8a6b36ff930547d9bc06d75c20a8ee77"
-
+# --- PAGE CONFIG ---
 st.set_page_config(page_title="Akhil's Market Terminal", page_icon="🇮🇳", layout="wide")
 
-# --- 📡 PRECISE DATA ENGINE ---
-def get_stock_data(symbol):
-    # 1. Clean the symbol (Remove .NS because we specify exchange=NSE)
-    clean_symbol = symbol.replace(".NS", "").strip()
-    
-    # 2. The ONE correct URL for Indian Stocks
-    url = f"https://api.twelvedata.com/time_series?symbol={clean_symbol}&exchange=NSE&interval=1day&outputsize=30&apikey={API_KEY}"
-    
+# --- 🕵️‍♂️ STEALTH SESSION (The Anti-Block Trick) ---
+def get_session():
+    session = requests.Session()
+    # This 'User-Agent' makes us look like a real Chrome browser, not a bot
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
+    return session
+
+# --- 📡 DATA ENGINE (Yahoo Finance) ---
+@st.cache_data(ttl=300)
+def get_stock_data(ticker):
     try:
-        response = requests.get(url)
-        data = response.json()
-
-        # 🚨 DEBUGGER: If it fails, return the EXACT error message from the server
-        if data.get("status") == "error":
-            return None, None, f"Server Said: {data.get('message')}"
-
-        # If success, process data
-        if "values" in data:
-            df = pd.DataFrame(data['values'])
-            df['datetime'] = pd.to_datetime(df['datetime'])
-            for col in ['open', 'high', 'low', 'close']:
-                df[col] = df[col].astype(float)
-            return df['close'].iloc[0], df, "Success"
+        # Force the .NS suffix for India
+        symbol = ticker.upper() if ticker.endswith(".NS") else f"{ticker.upper()}.NS"
+        
+        # Use our stealth session
+        session = get_session()
+        stock = yf.Ticker(symbol, session=session)
+        
+        # 1. Get History (1 Month)
+        # We handle the "No Data" error explicitly
+        history = stock.history(period="1mo")
+        
+        if history.empty:
+            return None, None, "No data found (Yahoo might be blocking)"
             
+        current_price = history['Close'].iloc[-1]
+        return current_price, history, "Success"
+
     except Exception as e:
-        return None, None, f"Crash Error: {str(e)}"
-    
-    return None, None, "Unknown Error"
+        return None, None, f"Error: {str(e)}"
 
 # --- 📰 NEWS ENGINE ---
 @st.cache_data(ttl=1800)
-def get_news(symbol_query):
-    clean_query = symbol_query.replace(".NS", "")
-    url = f"https://news.google.com/rss/search?q={clean_query}+stock+news+india&hl=en-IN&gl=IN&ceid=IN:en"
+def get_news(ticker):
+    # Search Google News
+    clean_ticker = ticker.replace(".NS", "")
+    url = f"https://news.google.com/rss/search?q={clean_ticker}+stock+news+india&hl=en-IN&gl=IN&ceid=IN:en"
+    
     try:
         response = requests.get(url)
         items = response.text.split('<item>')[1:6]
@@ -60,12 +65,12 @@ def get_news(symbol_query):
         return pd.DataFrame()
 
 # --- 📱 APP UI ---
-st.title("🇮🇳 Akhil's Live Terminal (Safe Mode)")
-st.caption("Status: Connected to TwelveData API 🟢")
+st.title("🇮🇳 Akhil's Stealth Terminal")
+st.caption("Powered by Yahoo Finance (Stealth Mode)")
 
 with st.sidebar:
-    ticker = st.text_input("Symbol", "TATASTEEL")
-    if st.button("Fetch Data"):
+    ticker_input = st.text_input("Symbol", "TATASTEEL")
+    if st.button("Fetch Data", type="primary"):
         run_app = True
     else:
         run_app = False
@@ -74,26 +79,33 @@ if run_app:
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader(f"📊 {ticker.upper()}")
-        with st.spinner("Connecting..."):
-            price, history, status = get_stock_data(ticker)
+        st.subheader(f"📊 {ticker_input.upper()}")
+        
+        with st.spinner("Talking to Yahoo..."):
+            price, history, status = get_stock_data(ticker_input)
         
         if status != "Success":
-            # 🛑 This will show us the REAL problem
             st.error(f"❌ {status}")
-            st.info("💡 If it says 'limit reached', wait 1 minute.")
+            st.warning("⚠️ If this fails repeatedly, Yahoo is blocking the Cloud IP. (Works 100% on Local Laptop).")
         else:
             st.metric("Live Price", f"₹{price:,.2f}")
-            fig = go.Figure(data=[go.Candlestick(x=history['datetime'],
-                            open=history['open'], high=history['high'],
-                            low=history['low'], close=history['close'])])
+            
+            # Draw Chart
+            fig = go.Figure(data=[go.Candlestick(x=history.index,
+                            open=history['Open'], high=history['High'],
+                            low=history['Low'], close=history['Close'])])
+            fig.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0))
             st.plotly_chart(fig, use_container_width=True)
 
     with col2:
         st.subheader("📰 Sentiment")
-        news_df = get_news(ticker)
+        news_df = get_news(ticker_input)
         if not news_df.empty:
             avg = news_df['Score'].mean()
-            st.info(f"Sentiment Score: {avg:.2f}")
+            if avg > 0.05: st.success(f"BULLISH 🚀 ({avg:.2f})")
+            elif avg < -0.05: st.error(f"BEARISH 📉 ({avg:.2f})")
+            else: st.info(f"NEUTRAL 😐 ({avg:.2f})")
+            
             for i, row in news_df.iterrows():
-                st.markdown(f"• [{row['Title']}]({row['Link']})")
+                emoji = "🟢" if row['Score'] > 0 else "🔴" if row['Score'] < 0 else "⚪"
+                st.markdown(f"{emoji} [{row['Title']}]({row['Link']})")
