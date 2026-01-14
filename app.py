@@ -5,41 +5,43 @@ import plotly.graph_objects as go
 import requests
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Akhil's Market Terminal", page_icon="🇮🇳", layout="wide")
+# --- 🎨 PAGE CONFIGURATION (Professional Look) ---
+st.set_page_config(page_title="Market Pulse Pro", page_icon="🇮🇳", layout="wide")
 
-# --- 📡 DATA ENGINE (Clean Mode) ---
+# --- 🧹 DATA ENGINE (Clean & Simple) ---
 @st.cache_data(ttl=300)
 def get_stock_data(ticker):
     try:
-        # Force the .NS suffix for India
         symbol = ticker.upper() if ticker.endswith(".NS") else f"{ticker.upper()}.NS"
-        
-        # 🟢 SIMPLIFIED: No custom session. Let yfinance handle the connection.
         stock = yf.Ticker(symbol)
-        
-        # Get History (1 Month)
         history = stock.history(period="1mo")
         
         if history.empty:
-            return None, None, "No data found (Yahoo might be blocking the Cloud IP)"
+            return None, None, "No data (Check Symbol)"
             
         current_price = history['Close'].iloc[-1]
-        return current_price, history, "Success"
+        
+        # Calculate Change
+        prev_close = history['Close'].iloc[-2] if len(history) > 1 else current_price
+        change_val = current_price - prev_close
+        change_pct = (change_val / prev_close) * 100
+        
+        return current_price, change_val, change_pct, history, "Success"
 
     except Exception as e:
-        return None, None, f"Error: {str(e)}"
+        return None, None, None, None, f"Error: {str(e)}"
 
-# --- 📰 NEWS ENGINE ---
+# --- 🧠 SENTIMENT ENGINE (Universal) ---
 @st.cache_data(ttl=1800)
-def get_news(ticker):
-    clean_ticker = ticker.replace(".NS", "")
-    url = f"https://news.google.com/rss/search?q={clean_ticker}+stock+news+india&hl=en-IN&gl=IN&ceid=IN:en"
+def get_sentiment(query, count=8):
+    # Google News RSS (Reliable & Free)
+    url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
     
     try:
         response = requests.get(url)
-        items = response.text.split('<item>')[1:6]
-        news_data = []
+        # Parse XML manually to avoid external libraries
+        items = response.text.split('<item>')[1:count+1] 
+        data = []
         analyzer = SentimentIntensityAnalyzer()
         
         for item in items:
@@ -47,55 +49,153 @@ def get_news(ticker):
                 title = item.split('<title>')[1].split('</title>')[0]
                 link = item.split('<link>')[1].split('</link>')[0] if '<link>' in item else '#'
                 score = analyzer.polarity_scores(title)['compound']
-                news_data.append({'Title': title, 'Score': score, 'Link': link})
-        return pd.DataFrame(news_data)
+                
+                # Tag the sentiment
+                if score > 0.05: mood = "Positive 🟢"
+                elif score < -0.05: mood = "Negative 🔴"
+                else: mood = "Neutral ⚪"
+                
+                data.append({'Title': title, 'Score': score, 'Link': link, 'Mood': mood})
+        return pd.DataFrame(data)
     except:
         return pd.DataFrame()
 
-# --- 📱 APP UI ---
-st.title("🇮🇳 Akhil's Market Terminal")
-st.caption("Powered by Yahoo Finance")
+# --- 📱 APP LAYOUT ---
+# Sidebar Navigation
+st.sidebar.title("Market Pulse 🇮🇳")
+page = st.sidebar.radio("Navigate", ["📈 Stocks", "🚀 IPO Center", "💰 Mutual Funds"])
+st.sidebar.markdown("---")
+st.sidebar.caption("v2.0 Professional Edition")
 
-with st.sidebar:
-    ticker_input = st.text_input("Symbol", "INFY")
-    st.caption("Examples: INFY, TATASTEEL, RELIANCE")
+# --- PAGE 1: STOCKS 📈 ---
+if page == "📈 Stocks":
+    st.title("Equity Research Terminal")
     
-    if st.button("Fetch Data", type="primary"):
-        run_app = True
-    else:
-        run_app = False
-
-if run_app:
-    col1, col2 = st.columns([2, 1])
-    
+    col1, col2 = st.columns([1, 3])
     with col1:
-        st.subheader(f"📊 {ticker_input.upper()}")
-        
-        with st.spinner("Fetching Data..."):
-            price, history, status = get_stock_data(ticker_input)
-        
-        if status != "Success":
-            st.error(f"❌ {status}")
-            st.warning("⚠️ If this fails, the Cloud Server IP is banned by Yahoo. This code will work 100% on your laptop.")
+        ticker = st.text_input("Symbol", "RELIANCE")
+        if st.button("Analyze Stock", type="primary"):
+            run_stock = True
         else:
-            st.metric("Live Price", f"₹{price:,.2f}")
+            run_stock = False
             
-            # Draw Chart
-            fig = go.Figure(data=[go.Candlestick(x=history.index,
-                            open=history['Open'], high=history['High'],
-                            low=history['Low'], close=history['Close'])])
-            fig.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0))
-            st.plotly_chart(fig, use_container_width=True)
+    if run_stock:
+        with st.spinner(f"Analyzing {ticker}..."):
+            price, change, pct, history, status = get_stock_data(ticker)
+            
+        if status == "Success":
+            # 1. METRICS ROW (Professional Header)
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Current Price", f"₹{price:,.2f}", f"{change:+.2f} ({pct:+.2f}%)")
+            
+            # Simple 50-Day Moving Average Logic (approx)
+            avg_price = history['Close'].mean()
+            m2.metric("Monthly Average", f"₹{avg_price:,.2f}")
+            
+            # Volume
+            vol = history['Volume'].iloc[-1]
+            m3.metric("Latest Volume", f"{vol:,}")
+            
+            st.markdown("---")
+            
+            # 2. CHARTS & NEWS
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                st.subheader("Price Action")
+                fig = go.Figure(data=[go.Candlestick(x=history.index,
+                                open=history['Open'], high=history['High'],
+                                low=history['Low'], close=history['Close'], name="Price")])
+                
+                # Add Moving Average Line
+                fig.add_trace(go.Scatter(x=history.index, y=history['Close'].rolling(window=5).mean(), 
+                                         mode='lines', name='5-Day Trend', line=dict(color='orange', width=1)))
+                
+                fig.update_layout(height=450, margin=dict(l=0, r=0, t=0, b=0), template="plotly_white")
+                st.plotly_chart(fig, use_container_width=True)
+                
+            with c2:
+                st.subheader("Market Chatter")
+                news = get_sentiment(ticker + " stock india")
+                if not news.empty:
+                    avg = news['Score'].mean()
+                    st.metric("Sentiment Score", f"{avg:.2f}", delta="Bullish" if avg > 0 else "Bearish")
+                    for i, row in news.iterrows():
+                        st.markdown(f"**{row['Mood']}** [{row['Title']}]({row['Link']})")
 
-    with col2:
-        st.subheader("📰 Sentiment")
-        news_df = get_news(ticker_input)
-        if not news_df.empty:
-            avg = news_df['Score'].mean()
-            if avg > 0.05: st.success(f"BULLISH 🚀 ({avg:.2f})")
-            elif avg < -0.05: st.error(f"BEARISH 📉 ({avg:.2f})")
-            else: st.info(f"NEUTRAL 😐 ({avg:.2f})")
+# --- PAGE 2: IPO CENTER 🚀 ---
+elif page == "🚀 IPO Center":
+    st.title("IPO Grey Market & Sentiment")
+    st.info("💡 Tracks buzz, GMP discussions, and subscription news.")
+    
+    # Pre-defined hot topics
+    ipo_query = st.text_input("Search IPO Name (or leave blank for general buzz)", "IPO GMP India")
+    
+    if st.button("Scan IPO Market"):
+        with st.spinner("Scanning Grey Market discussions..."):
+            # We search for "IPO Name + GMP" to find grey market discussions
+            query = f"{ipo_query} GMP Subscription" if ipo_query != "IPO GMP India" else "Upcoming IPO GMP India"
+            df = get_sentiment(query, count=10)
             
-            for i, row in news_df.iterrows():
-                emoji = "🟢" if row['Score'] > 0 else "🔴" if row['Score'] < 0 else "⚪"
-                st.markdown(f"{emoji} [{row['Title']}]({row['Link']})")
+        if not df.empty:
+            avg = df['Score'].mean()
+            
+            # Display Big Sentiment Score
+            st.markdown("### Market Sentiment Gauge")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Buzz Score", f"{avg:.2f}")
+            
+            if avg > 0.1:
+                col2.success("🔥 High Retail Interest")
+                col3.success("📈 GMP Likely Positive")
+            elif avg < -0.1:
+                col2.error("❄️ Low Retail Interest")
+                col3.error("📉 GMP Likely Negative")
+            else:
+                col2.warning("😐 Moderate Interest")
+                col3.info("➡️ GMP Stable/Uncertain")
+            
+            st.markdown("---")
+            st.subheader("Latest GMP & Subscription Headlines")
+            
+            for i, row in df.iterrows():
+                # Highlight GMP specific news
+                if "GMP" in row['Title'] or "Premium" in row['Title']:
+                    st.markdown(f"💰 **{row['Title']}** \n[Read Source]({row['Link']})")
+                else:
+                    st.markdown(f"📰 {row['Title']}  \n[Read Source]({row['Link']})")
+        else:
+            st.warning("No active IPO discussions found right now.")
+
+# --- PAGE 3: MUTUAL FUNDS 💰 ---
+elif page == "💰 Mutual Funds":
+    st.title("Mutual Fund Analyzer")
+    st.caption("Track sentiment for Categories or Specific Funds")
+    
+    mf_list = ["Quant Small Cap", "HDFC Mid Cap", "Parag Parikh Flexi Cap", "SBI Contra Fund", "Nippon India Small Cap"]
+    selected_mf = st.selectbox("Select Popular Fund", mf_list)
+    custom_mf = st.text_input("Or type another fund name...")
+    
+    final_query = custom_mf if custom_mf else selected_mf
+    
+    if st.button("Analyze Fund"):
+        with st.spinner(f"Analyzing sentiment for {final_query}..."):
+            # Search for Fund reviews and news
+            df = get_sentiment(f"{final_query} mutual fund review performance")
+            
+        if not df.empty:
+            avg = df['Score'].mean()
+            
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                st.metric("Sentiment Score", f"{avg:.2f}")
+                if avg > 0.2:
+                    st.success("🌟 Highly Recommended by Media")
+                elif avg > 0:
+                    st.info("✅ Generally Positive")
+                else:
+                    st.warning("⚠️ Mixed/Negative Reviews")
+                    
+            with c2:
+                st.subheader("What Investors Are Saying")
+                for i, row in df.iterrows():
+                    st.markdown(f"• [{row['Title']}]({row['Link']})")
