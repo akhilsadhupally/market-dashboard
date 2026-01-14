@@ -1,6 +1,9 @@
 streamlit
 yfinance
-vaderSentiment
 pandas
-requests
 plotly
+requests
+mftool             
+beautifulsoup4     
+transformers       
+torch             
