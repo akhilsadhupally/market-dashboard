@@ -1,11 +1,8 @@
 streamlit
-yfinance
 pandas
-plotly
+yfinance
 requests
-mftool
 beautifulsoup4
-deprecated
-vaderSentiment
+plotly
 lxml
 html5lib
