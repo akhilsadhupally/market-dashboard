@@ -1,8 +1,3 @@
-Here is the **complete, corrected code** for your `app.py`.
-
-I have fixed the `SyntaxError` by moving the IPO function to the top with the others, removed the duplicate lines, and ensured the search bar logic is clean. You can copy-paste this entire block to replace your current file.
-
-```python
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -284,5 +279,3 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
-
-```
