@@ -1,3 +1,8 @@
+Here is the **complete, corrected code** for your `app.py`.
+
+I have fixed the `SyntaxError` by moving the IPO function to the top with the others, removed the duplicate lines, and ensured the search bar logic is clean. You can copy-paste this entire block to replace your current file.
+
+```python
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -8,13 +13,10 @@ from bs4 import BeautifulSoup
 from mftool import Mftool
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-
-# ... (The rest of your existing app.py code goes here) ...
-
 # --- 🎨 CONFIGURATION ---
 st.set_page_config(page_title="InvestRight.AI", page_icon="🦁", layout="wide")
-# --- 🛠️ LOAD MASTER STOCK LIST (New Feature) ---
-# --- 🛠️ LOAD MASTER STOCK LIST (Debug Version) ---
+
+# --- 🛠️ DATA LOADING (Run once at start) ---
 @st.cache_data
 def load_stock_data():
     try:
@@ -32,23 +34,23 @@ def load_stock_data():
             df['Search_Label'] = df['Symbol'] + " - " + df['Company Name']
         else:
             st.error("CSV Loaded but columns 'SYMBOL' or 'NAME OF COMPANY' not found!")
-            st.write("Columns found:", df.columns.tolist())
             return pd.DataFrame()
             
         return df
     except FileNotFoundError:
-        st.error("❌ Critical Error: 'stocks.csv' file not found in the project folder.")
+        st.error("❌ Critical Error: 'stocks.csv' file not found. Please add it to your project folder.")
         return pd.DataFrame()
     except Exception as e:
         st.error(f"❌ Error loading file: {e}")
         return pd.DataFrame()
 
-# Load data
+# Load master list immediately
 stock_df = load_stock_data()
+
+
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
 
-# 1. IPO ENGINE (Scraper + News)
-# 1. IPO ENGINE (Scraper + News)
+# 1. IPO ENGINE (New Smart Version)
 @st.cache_data(ttl=1800)
 def get_ipo_dashboard_data():
     url = "https://www.investorgain.com/report/live-ipo-gmp/331/"
@@ -59,7 +61,7 @@ def get_ipo_dashboard_data():
     try:
         # Method: Use Pandas to automatically find the table
         r = requests.get(url, headers=headers)
-        # Use lxml to read tables (make sure lxml is in requirements.txt)
+        # Use lxml to read tables
         dfs = pd.read_html(r.text)
         
         if not dfs:
@@ -67,9 +69,8 @@ def get_ipo_dashboard_data():
             
         df = dfs[0] # The first table is usually the correct one
         
-        # CLEANUP: Keep only useful columns (Name, GMP, Listing %, Date)
-        # We select by index to be safe: 0=Name, 2=Price, 5=GMP, 6=Listing%
-        # Note: Websites change layouts, so we try to be generic
+        # CLEANUP: Keep only useful columns by index
+        # 0=Name, 2=Price, 5=GMP, 7=Date (Adjust based on site layout)
         df = df.iloc[:, [0, 2, 5, 7]] 
         df.columns = ['IPO Name', 'Price', 'GMP', 'Date']
         
@@ -83,13 +84,8 @@ def get_ipo_dashboard_data():
         df['GMP'] = df['GMP'].apply(clean_gmp)
         
         # LOGIC: Sort into Open, Upcoming, Closed
-        # "Open" usually has a date range like "14-Jan to 16-Jan"
         open_ipos = df[df['Date'].str.contains('to', case=False, na=False)]
-        
-        # "Upcoming" usually has a single future date or "Upcoming" text
         upcoming_ipos = df[df['Date'].str.contains('Upcoming', case=False, na=False)]
-        
-        # Everything else is Closed/Past
         closed_ipos = df[~df.index.isin(open_ipos.index) & ~df.index.isin(upcoming_ipos.index)]
         
         return open_ipos, upcoming_ipos, closed_ipos
@@ -97,11 +93,12 @@ def get_ipo_dashboard_data():
     except Exception as e:
         print(f"Error: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-# 2. MUTUAL FUND ENGINE (Smart Search)
-@st.cache_data(ttl=86400) # Cache list for 24 hours
+
+# 2. MUTUAL FUND ENGINE
+@st.cache_data(ttl=86400)
 def get_all_schemes():
     obj = Mftool()
-    return obj.get_scheme_codes() # Returns a huge dict {code: name}
+    return obj.get_scheme_codes()
 
 @st.cache_data(ttl=3600)
 def get_mf_data(code):
@@ -117,7 +114,7 @@ def get_mf_data(code):
     except:
         return None, None
 
-# 3. EQUITY ENGINE (Yahoo + Sentiment)
+# 3. EQUITY ENGINE
 @st.cache_data(ttl=300)
 def get_stock_data(ticker):
     try:
@@ -151,7 +148,8 @@ def get_ai_sentiment(query):
     except:
         return pd.DataFrame()
 
-# --- 📱 APP UI ---
+
+# --- 📱 APP UI START ---
 st.sidebar.title("🦁 InvestRight.AI")
 page = st.sidebar.radio("Go to", ["📈 Equity Research", "🚀 IPO & GMP", "💰 Mutual Funds"])
 
@@ -160,7 +158,6 @@ if page == "📈 Equity Research":
     st.title("Equity Intelligence")
     
     # 1. AUTOCOMPLETE SEARCH BAR
-    # This uses the stock_df we loaded at the top
     search_label = st.selectbox(
         "Search Stock (Type 'Tata', 'HDFC', etc.)", 
         options=stock_df['Search_Label'].unique() if not stock_df.empty else [],
@@ -208,11 +205,10 @@ if page == "📈 Equity Research":
 
 # --- PAGE 2: IPO ---
 elif page == "🚀 IPO & GMP":
-   elif page == "🚀 IPO & GMP":
     st.title("🚀 IPO Intelligence")
     
-    # 1. Call the NEW function name
     with st.spinner("Scanning Market for Active IPOs..."):
+        # Fetch the split data using the NEW function
         open_df, upcoming_df, closed_df = get_ipo_dashboard_data()
 
     # --- SECTION 1: LIVE & OPEN (Top Priority) ---
@@ -221,6 +217,10 @@ elif page == "🚀 IPO & GMP":
         st.caption("Currently bidding or listing soon.")
         st.dataframe(
             open_df,
+            column_config={
+                "IPO Name": st.column_config.TextColumn("Company"),
+                "GMP": st.column_config.NumberColumn("GMP (₹)", format="₹%d"),
+            },
             hide_index=True,
             use_container_width=True
         )
@@ -249,11 +249,11 @@ elif page == "🚀 IPO & GMP":
             st.dataframe(closed_df.head(10), hide_index=True, use_container_width=True)
         else:
             st.write("No data available.")
+
 # --- PAGE 3: MUTUAL FUNDS ---
 elif page == "💰 Mutual Funds":
     st.title("Mutual Fund Analyzer")
     
-    # 1. SMART SEARCH (The key fix!)
     st.subheader("Search Any Fund")
     
     # Load all scheme names once
@@ -264,8 +264,7 @@ elif page == "💰 Mutual Funds":
     search_query = st.selectbox("Type to Search Fund", ["Type here..."] + scheme_names)
     
     if search_query != "Type here...":
-        # Find the code for this name
-        # (Reverse lookup: Value -> Key)
+        # Find the code for this name (Reverse lookup)
         code = list(all_schemes.keys())[list(all_schemes.values()).index(search_query)]
         
         if st.button("Fetch Data"):
@@ -286,8 +285,4 @@ elif page == "💰 Mutual Funds":
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
 
-
-
-
-
-
+```
