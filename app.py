@@ -37,53 +37,55 @@ stock_df = load_stock_data()
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
 
 # 1. IPO ENGINE (Scraper + News)
-@st.cache_data(ttl=3600)
-def get_ipo_gmp():
-    url = "https://www.investorgain.com/report/live-ipo-gmp/331/"
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table', {'class': 'table'})
-        data = []
-        rows = table.find_all('tr')[1:]
-        for row in rows:
-            cols = row.find_all('td')
-            if len(cols) > 3:
-                ipo_name = cols[0].text.strip()
-                gmp = cols[3].text.strip()
-                try:
-                    gmp_val = float(gmp.replace('₹', '').replace(',', ''))
-                except:
-                    gmp_val = 0
-                data.append({'IPO Name': ipo_name, 'GMP': gmp_val, 'Status': cols[2].text.strip()})
-        return pd.DataFrame(data)
-    except:
-        return pd.DataFrame()
-
-# --- NEW FUNCTION CORRECTLY PLACED HERE ---
+# 1. IPO ENGINE (Scraper + News)
 @st.cache_data(ttl=1800)
-def get_ipo_subscription_status():
-    url = "https://www.chittorgarh.com/report/ipo-subscription-status-live-bidding-data-bse-nse/21/"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+def get_ipo_dashboard_data():
+    url = "https://www.investorgain.com/report/live-ipo-gmp/331/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    
     try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table', {'class': 'table-bordered'})
-        rows = table.find_all('tr')[1:] 
-        data = []
-        for row in rows:
-            cols = row.find_all('td')
-            if len(cols) > 5:
-                # Extract columns: Company, QIB, NII, Retail, Total
-                data.append({
-                    "IPO Name": cols[0].text.strip(),
-                    "Retail (x)": float(cols[4].text.replace('x', '').replace(',', '').strip() or 0),
-                    "Total Subscription (x)": float(cols[6].text.replace('x', '').replace(',', '').strip() or 0)
-                })
-        return pd.DataFrame(data)
+        # Method: Use Pandas to automatically find the table
+        r = requests.get(url, headers=headers)
+        # Use lxml to read tables (make sure lxml is in requirements.txt)
+        dfs = pd.read_html(r.text)
+        
+        if not dfs:
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            
+        df = dfs[0] # The first table is usually the correct one
+        
+        # CLEANUP: Keep only useful columns (Name, GMP, Listing %, Date)
+        # We select by index to be safe: 0=Name, 2=Price, 5=GMP, 6=Listing%
+        # Note: Websites change layouts, so we try to be generic
+        df = df.iloc[:, [0, 2, 5, 7]] 
+        df.columns = ['IPO Name', 'Price', 'GMP', 'Date']
+        
+        # Clean numeric GMP data
+        def clean_gmp(x):
+            try:
+                return float(str(x).replace('₹', '').replace(',', ''))
+            except:
+                return 0.0
+
+        df['GMP'] = df['GMP'].apply(clean_gmp)
+        
+        # LOGIC: Sort into Open, Upcoming, Closed
+        # "Open" usually has a date range like "14-Jan to 16-Jan"
+        open_ipos = df[df['Date'].str.contains('to', case=False, na=False)]
+        
+        # "Upcoming" usually has a single future date or "Upcoming" text
+        upcoming_ipos = df[df['Date'].str.contains('Upcoming', case=False, na=False)]
+        
+        # Everything else is Closed/Past
+        closed_ipos = df[~df.index.isin(open_ipos.index) & ~df.index.isin(upcoming_ipos.index)]
+        
+        return open_ipos, upcoming_ipos, closed_ipos
+
     except Exception as e:
-        return pd.DataFrame()
+        print(f"Error: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 # 2. MUTUAL FUND ENGINE (Smart Search)
 @st.cache_data(ttl=86400) # Cache list for 24 hours
 def get_all_schemes():
@@ -274,6 +276,7 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
 
 
 
