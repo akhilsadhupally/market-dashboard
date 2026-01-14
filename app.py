@@ -11,13 +11,11 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 # --- 🎨 CONFIGURATION ---
 st.set_page_config(page_title="InvestRight.AI", page_icon="🦁", layout="wide")
 
-# --- 🛠️ DATA LOADING (Run once at start) ---
-@st.cache_data
-# --- 🛠️ DATA LOADING (The Web Version) ---
+# --- 🛠️ DATA LOADING (GitHub Version) ---
 @st.cache_data
 def load_stock_data():
     try:
-        # REPLACE THIS URL with your actual "Raw" GitHub URL
+        # RAW GitHub URL (Correct)
         url = "https://raw.githubusercontent.com/akhilsadhupally/market-dashboard/refs/heads/main/stocks.csv"
         
         # Read directly from the internet
@@ -44,97 +42,86 @@ def load_stock_data():
             ]
         }
         return pd.DataFrame(data)
-            
-        return df
-    except FileNotFoundError:
-        st.error("❌ Critical Error: 'stocks.csv' file not found. Please add it to your project folder.")
-        return pd.DataFrame()
-    except Exception as e:
-        st.error(f"❌ Error loading file: {e}")
-        return pd.DataFrame()
 
 # Load master list immediately
 stock_df = load_stock_data()
 
 
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
-# 1. IPO ENGINE (Source: Chittorgarh + Backup)
-@st.cache_data(ttl=1800)
+
+# 1. IPO ENGINE (Source: IPOWatch - Most Reliable for Cloud)
+@st.cache_data(ttl=3600)
 def get_ipo_dashboard_data():
-    # Headers to mimic a browser
+    # Headers to look like a real phone/laptop
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
     
-    # 🔹 ATTEMPT 1: Chittorgarh (Usually reliable)
+    url = "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"
+    
     try:
-        url = "https://www.chittorgarh.com/ipo/ipo_dashboard.asp"
         r = requests.get(url, headers=headers)
-        
-        # Read all tables
-        dfs = pd.read_html(r.text)
-        if not dfs: raise ValueError("No tables found")
-        
-        # Chittorgarh usually puts the main data in the first valid table
-        # We look for a table containing 'Issuer Company'
-        df = None
-        for d in dfs:
-            if 'Issuer Company' in str(d.columns):
-                df = d
-                break
-        
-        if df is None: raise ValueError("IPO Table not found")
-
-        # Cleanup Columns
-        # Chittorgarh cols: [Issuer Company, Open, Close, Lot Size, Issue Price, GMP(Guessed)]
-        # We rename standard columns
-        df = df.rename(columns={
-            'Issuer Company': 'IPO Name',
-            'Open': 'Open Date',
-            'Close': 'Close Date',
-            'Issue Price (Rs)': 'Price'
-        })
-        
-        # Create a fake GMP column if missing (Chittorgarh dashboard doesn't always show GMP on main page)
-        if 'GMP' not in df.columns:
-            df['GMP'] = 0 
+        if r.status_code != 200:
+            raise ValueError("Blocked by website")
             
-        # Create a single 'Date' column for our logic
-        df['Date'] = df['Open Date'] + " to " + df['Close Date']
-
-        # SORTING LOGIC
-        # Open: If "Close Date" is in the future
-        today = pd.Timestamp.now().strftime('%Y-%m-%d')
+        # IPOWatch usually has one big table
+        dfs = pd.read_html(r.text)
         
-        # Simple string matching for status
-        open_mask = df['Close Date'].astype(str) >= today
-        # If open date is also future, it's Upcoming
-        upcoming_mask = df['Open Date'].astype(str) > today
+        if not dfs:
+            raise ValueError("No tables found")
+            
+        df = dfs[0] # Grab the first table
         
-        open_ipos = df[open_mask & ~upcoming_mask]
-        upcoming_ipos = df[upcoming_mask]
-        closed_ipos = df[~open_mask & ~upcoming_mask]
+        # Normalize column names
+        df.columns = [c.lower() for c in df.columns]
+        
+        # Map columns dynamically
+        new_df = pd.DataFrame()
+        new_df['IPO Name'] = df.iloc[:, 0] # First col is always Name
+        
+        # Try to find Price
+        if 'price' in str(df.columns):
+            new_df['Price'] = df[df.columns[df.columns.str.contains('price')][0]]
+        else:
+            new_df['Price'] = df.iloc[:, 1] # Fallback to 2nd col
 
+        # Try to find GMP
+        if 'gmp' in str(df.columns) or 'premium' in str(df.columns):
+            new_df['GMP'] = df[df.columns[df.columns.str.contains('gmp|premium')][0]]
+        else:
+            new_df['GMP'] = df.iloc[:, 2] # Fallback to 3rd col
+            
+        # CLEAN GMP (Remove symbols)
+        def clean_gmp(val):
+            try:
+                # Remove ₹, commas, and (Subject to...) text
+                clean = str(val).split('(')[0].replace('₹', '').replace(',', '').strip()
+                return float(clean)
+            except:
+                return 0.0
+        
+        new_df['GMP_Value'] = new_df['GMP'].apply(clean_gmp)
+        
+        # Create a fake 'Date' column for display
+        new_df['Date'] = "Check Details"
+        
+        # Sort: Highest GMP first
+        new_df = new_df.sort_values(by='GMP_Value', ascending=False)
+        
+        # Split purely for UI layout
+        # Top 5 = "Open / Hot", Next 10 = "Upcoming", Rest = "Closed/Low Interest"
+        open_ipos = new_df.head(5)
+        upcoming_ipos = new_df.iloc[5:15]
+        closed_ipos = new_df.iloc[15:]
+        
         return open_ipos, upcoming_ipos, closed_ipos
 
     except Exception as e:
-        # 🔹 BACKUP MODE (If scraping fails, show this so UI isn't empty)
-        print(f"Scraping failed: {e}")
-        
-        data = {
-            'IPO Name': ['Zomato (Example)', 'Swiggy (Example)', 'Hyundai India'],
-            'Price': ['72-76', '350-380', '1850-1900'],
-            'GMP': [12, 45, -10],
-            'Date': ['15-Jan to 17-Jan', 'Upcoming', 'Closed']
-        }
-        df = pd.DataFrame(data)
-        
-        # Return fallback data
-        return (
-            df[df['Date'].str.contains('to')], # Open
-            df[df['Date'] == 'Upcoming'],      # Upcoming
-            df[df['Date'] == 'Closed']         # Closed
-        )
+        # Fallback only if this fails too
+        data = {'IPO Name': ['Zomato (Demo)', 'Swiggy (Demo)'], 'GMP': [10, 50]}
+        fb = pd.DataFrame(data)
+        return fb, pd.DataFrame(), pd.DataFrame()
+
 # 2. MUTUAL FUND ENGINE
 @st.cache_data(ttl=86400)
 def get_all_schemes():
@@ -171,23 +158,52 @@ def get_stock_data(ticker):
     except Exception as e:
         return None, None, None, None, str(e)
 
-@st.cache_data(ttl=1800)
-def get_ai_sentiment(query):
-    url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
-    try:
-        response = requests.get(url)
-        items = response.text.split('<item>')[1:10]
-        data = []
-        analyzer = SentimentIntensityAnalyzer()
-        for item in items:
-            if '<title>' in item:
-                title = item.split('<title>')[1].split('</title>')[0]
-                link = item.split('<link>')[1].split('</link>')[0] if '<link>' in item else '#'
+# 4. SOCIAL BUZZ ENGINE (Reddit & X via Google)
+@st.cache_data(ttl=600)
+def get_social_buzz(ticker):
+    # We search Google News specifically for Reddit and Twitter threads
+    queries = [
+        f"site:reddit.com {ticker} stock discussion",
+        f"site:twitter.com {ticker} stock analysis",
+        f"{ticker} stock news india"
+    ]
+    
+    combined_data = []
+    analyzer = SentimentIntensityAnalyzer()
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+
+    for q in queries:
+        url = f"https://news.google.com/rss/search?q={q}&hl=en-IN&gl=IN&ceid=IN:en"
+        try:
+            r = requests.get(url, headers=headers)
+            soup = BeautifulSoup(r.text, 'xml') # XML parser for RSS
+            items = soup.find_all('item')[:5]   # Top 5 per source
+            
+            for item in items:
+                title = item.title.text
+                link = item.link.text
+                
+                # Determine Source based on query
+                if "reddit" in q: source = "Reddit 🔴"
+                elif "twitter" in q: source = "X (Twitter) ⚫"
+                else: source = "News 📰"
+                
+                # Sentiment Score
                 score = analyzer.polarity_scores(title)['compound']
-                data.append({'Title': title, 'Score': score, 'Link': link})
-        return pd.DataFrame(data)
-    except:
-        return pd.DataFrame()
+                
+                combined_data.append({
+                    'Title': title,
+                    'Source': source,
+                    'Score': score,
+                    'Link': link
+                })
+        except:
+            continue
+
+    return pd.DataFrame(combined_data)
 
 
 # --- 📱 APP UI START ---
@@ -206,11 +222,10 @@ if page == "📈 Equity Research":
         placeholder="Type to search..."
     )
 
-    # Logic: If user picks something, extract symbol. If not, default to Zomato.
     if search_label:
-        ticker = search_label.split(" - ")[0] # Extracts "TATASTEEL" from the string
+        ticker = search_label.split(" - ")[0] 
     else:
-        ticker = "ZOMATO" # Default fallback
+        ticker = "ZOMATO" 
     
     if st.button("Analyze Stock"):
         with st.spinner("Fetching fundamentals & sentiment..."):
@@ -232,30 +247,41 @@ if page == "📈 Equity Research":
             fig.update_layout(height=400, margin=dict(l=0,r=0,t=0,b=0))
             st.plotly_chart(fig, use_container_width=True)
             
-            # 3. SENTIMENT
-            st.subheader("Market Sentiment")
-            news = get_ai_sentiment(f"{ticker} stock news india")
-            if not news.empty:
-                avg = news['Score'].mean()
-                if avg > 0.05: st.success(f"Market Mood: BULLISH 🚀 ({avg:.2f})")
-                elif avg < -0.05: st.error(f"Market Mood: BEARISH 📉 ({avg:.2f})")
-                else: st.info(f"Market Mood: NEUTRAL 😐 ({avg:.2f})")
+            # 3. COMMUNITY SENTIMENT (New!)
+            st.subheader("Community & Social Buzz")
+            st.caption("Discussions from Reddit, X (Twitter), and News.")
+            
+            with st.spinner("Analyzing social discussions..."):
+                buzz_df = get_social_buzz(ticker)
+            
+            if not buzz_df.empty:
+                avg_score = buzz_df['Score'].mean()
                 
-                for i, row in news.head(3).iterrows():
-                    st.markdown(f"• [{row['Title']}]({row['Link']})")
+                if avg_score > 0.15: 
+                    st.success(f"🔥 Market Mood: BULLISH (Score: {avg_score:.2f})")
+                elif avg_score < -0.15: 
+                    st.error(f"🩸 Market Mood: BEARISH (Score: {avg_score:.2f})")
+                else: 
+                    st.info(f"⚖️ Market Mood: NEUTRAL (Score: {avg_score:.2f})")
+                
+                for i, row in buzz_df.iterrows():
+                    icon = row['Source']
+                    color = "green" if row['Score'] > 0 else "red" if row['Score'] < 0 else "grey"
+                    st.markdown(f"**{icon}** [{row['Title']}]({row['Link']}) <span style='color:{color};'>({row['Score']})</span>", unsafe_allow_html=True)
+            else:
+                st.write("No recent social discussions found.")
 
 # --- PAGE 2: IPO ---
 elif page == "🚀 IPO & GMP":
     st.title("🚀 IPO Intelligence")
     
     with st.spinner("Scanning Market for Active IPOs..."):
-        # Fetch the split data using the NEW function
         open_df, upcoming_df, closed_df = get_ipo_dashboard_data()
 
-    # --- SECTION 1: LIVE & OPEN (Top Priority) ---
-    st.header("🟢 Open Now / Active")
+    # SECTION 1: HOT / OPEN
+    st.header("🔥 Hot / Active GMP")
     if not open_df.empty:
-        st.caption("Currently bidding or listing soon.")
+        st.caption("Top IPOs by GMP Value (Implied Profit)")
         st.dataframe(
             open_df,
             column_config={
@@ -266,46 +292,37 @@ elif page == "🚀 IPO & GMP":
             use_container_width=True
         )
     else:
-        st.info("No active IPOs open for bidding today.")
+        st.info("No active IPOs found.")
 
     st.markdown("---")
 
-    # --- SECTION 2: UPCOMING (Future) ---
-    st.header("📅 Upcoming")
+    # SECTION 2: UPCOMING
+    st.header("📅 Upcoming Watchlist")
     if not upcoming_df.empty:
-        st.caption("Watchlist for next week.")
-        st.dataframe(
-            upcoming_df,
-            hide_index=True,
-            use_container_width=True
-        )
+        st.dataframe(upcoming_df, hide_index=True, use_container_width=True)
     else:
-        st.info("No upcoming IPO dates announced yet.")
+        st.info("No upcoming IPOs found.")
 
     st.markdown("---")
 
-    # --- SECTION 3: RECENTLY CLOSED (History) ---
-    with st.expander("Show Recently Closed IPOs (History)"):
+    # SECTION 3: HISTORY
+    with st.expander("Show All Other IPOs"):
         if not closed_df.empty:
-            st.dataframe(closed_df.head(10), hide_index=True, use_container_width=True)
+            st.dataframe(closed_df.head(20), hide_index=True, use_container_width=True)
         else:
             st.write("No data available.")
 
 # --- PAGE 3: MUTUAL FUNDS ---
 elif page == "💰 Mutual Funds":
     st.title("Mutual Fund Analyzer")
-    
     st.subheader("Search Any Fund")
     
-    # Load all scheme names once
     all_schemes = get_all_schemes()
     scheme_names = list(all_schemes.values())
     
-    # User types, we filter the list
     search_query = st.selectbox("Type to Search Fund", ["Type here..."] + scheme_names)
     
     if search_query != "Type here...":
-        # Find the code for this name (Reverse lookup)
         code = list(all_schemes.keys())[list(all_schemes.values()).index(search_query)]
         
         if st.button("Fetch Data"):
@@ -313,21 +330,12 @@ elif page == "💰 Mutual Funds":
                 hist, details = get_mf_data(code)
                 
             if hist is not None:
-                # Metrics
                 curr = hist['nav'].iloc[-1]
                 st.markdown(f"### {details['scheme_name']}")
                 st.metric("Current NAV", f"₹{curr}", f"Risk: {details.get('scheme_risk', 'N/A')}")
                 
-                # Chart
                 fig = px.line(hist.tail(365), x='date', y='nav', title="1-Year Performance")
                 fig.update_traces(line_color='#2ecc71', line_width=3)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
-
-
-
-
-
-
