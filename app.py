@@ -8,32 +8,21 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Akhil's Market Terminal", page_icon="🇮🇳", layout="wide")
 
-# --- 🕵️‍♂️ STEALTH SESSION (The Anti-Block Trick) ---
-def get_session():
-    session = requests.Session()
-    # This 'User-Agent' makes us look like a real Chrome browser, not a bot
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    })
-    return session
-
-# --- 📡 DATA ENGINE (Yahoo Finance) ---
+# --- 📡 DATA ENGINE (Clean Mode) ---
 @st.cache_data(ttl=300)
 def get_stock_data(ticker):
     try:
         # Force the .NS suffix for India
         symbol = ticker.upper() if ticker.endswith(".NS") else f"{ticker.upper()}.NS"
         
-        # Use our stealth session
-        session = get_session()
-        stock = yf.Ticker(symbol, session=session)
+        # 🟢 SIMPLIFIED: No custom session. Let yfinance handle the connection.
+        stock = yf.Ticker(symbol)
         
-        # 1. Get History (1 Month)
-        # We handle the "No Data" error explicitly
+        # Get History (1 Month)
         history = stock.history(period="1mo")
         
         if history.empty:
-            return None, None, "No data found (Yahoo might be blocking)"
+            return None, None, "No data found (Yahoo might be blocking the Cloud IP)"
             
         current_price = history['Close'].iloc[-1]
         return current_price, history, "Success"
@@ -44,7 +33,6 @@ def get_stock_data(ticker):
 # --- 📰 NEWS ENGINE ---
 @st.cache_data(ttl=1800)
 def get_news(ticker):
-    # Search Google News
     clean_ticker = ticker.replace(".NS", "")
     url = f"https://news.google.com/rss/search?q={clean_ticker}+stock+news+india&hl=en-IN&gl=IN&ceid=IN:en"
     
@@ -65,11 +53,13 @@ def get_news(ticker):
         return pd.DataFrame()
 
 # --- 📱 APP UI ---
-st.title("🇮🇳 Akhil's Stealth Terminal")
-st.caption("Powered by Yahoo Finance (Stealth Mode)")
+st.title("🇮🇳 Akhil's Market Terminal")
+st.caption("Powered by Yahoo Finance")
 
 with st.sidebar:
-    ticker_input = st.text_input("Symbol", "TATASTEEL")
+    ticker_input = st.text_input("Symbol", "INFY")
+    st.caption("Examples: INFY, TATASTEEL, RELIANCE")
+    
     if st.button("Fetch Data", type="primary"):
         run_app = True
     else:
@@ -81,12 +71,12 @@ if run_app:
     with col1:
         st.subheader(f"📊 {ticker_input.upper()}")
         
-        with st.spinner("Talking to Yahoo..."):
+        with st.spinner("Fetching Data..."):
             price, history, status = get_stock_data(ticker_input)
         
         if status != "Success":
             st.error(f"❌ {status}")
-            st.warning("⚠️ If this fails repeatedly, Yahoo is blocking the Cloud IP. (Works 100% on Local Laptop).")
+            st.warning("⚠️ If this fails, the Cloud Server IP is banned by Yahoo. This code will work 100% on your laptop.")
         else:
             st.metric("Live Price", f"₹{price:,.2f}")
             
