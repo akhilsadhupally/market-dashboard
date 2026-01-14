@@ -7,3 +7,5 @@ mftool
 beautifulsoup4
 deprecated
 vaderSentiment
+lxml
+html5lib
