@@ -13,23 +13,37 @@ st.set_page_config(page_title="InvestRight.AI", page_icon="🦁", layout="wide")
 
 # --- 🛠️ DATA LOADING (Run once at start) ---
 @st.cache_data
+# --- 🛠️ DATA LOADING (The Web Version) ---
+@st.cache_data
 def load_stock_data():
     try:
-        # 1. Try loading the file
-        df = pd.read_csv('stocks.csv')
+        # REPLACE THIS URL with your actual "Raw" GitHub URL
+        url = "https://raw.githubusercontent.com/akhilsadhupally/market-dashboard/refs/heads/main/stocks.csv"
         
-        # 2. Clean names
+        # Read directly from the internet
+        df = pd.read_csv(url)
         df.columns = df.columns.str.strip()
         
-        # 3. Create Search Label
-        # Check if 'SYMBOL' column exists, otherwise try 'Symbol' (case sensitive)
         if 'SYMBOL' in df.columns:
             df['Search_Label'] = df['SYMBOL'] + " - " + df['NAME OF COMPANY']
-        elif 'Symbol' in df.columns: # Handle case sensitivity
+        elif 'Symbol' in df.columns:
             df['Search_Label'] = df['Symbol'] + " - " + df['Company Name']
         else:
-            st.error("CSV Loaded but columns 'SYMBOL' or 'NAME OF COMPANY' not found!")
             return pd.DataFrame()
+        return df
+
+    except Exception as e:
+        # Fallback if internet fails
+        st.warning(f"⚠️ Could not load file from GitHub: {e}")
+        data = {
+            'Search_Label': [
+                'TATASTEEL - Tata Steel Ltd', 
+                'TATAMOTORS - Tata Motors Ltd', 
+                'RELIANCE - Reliance Industries', 
+                'ZOMATO - Zomato Ltd'
+            ]
+        }
+        return pd.DataFrame(data)
             
         return df
     except FileNotFoundError:
@@ -279,3 +293,4 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
