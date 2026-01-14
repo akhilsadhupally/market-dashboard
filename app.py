@@ -8,53 +8,32 @@ from bs4 import BeautifulSoup
 from mftool import Mftool
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-import pandas as pd
-from flask import Flask, jsonify, request
-
-app = Flask(__name__)
-
-# --- NEW CODE START ---
-
-# 1. Load the Master List
-# We load this ONCE when the app starts so it's super fast
-try:
-    # Read the CSV. We only need the Symbol and Company Name.
-    # Note: Ensure your CSV has columns roughly named 'SYMBOL' and 'NAME OF COMPANY'
-    df = pd.read_csv('stocks.csv')
-    
-    # Clean up column names just in case (remove spaces)
-    df.columns = df.columns.str.strip()
-    
-    # Create a simple list of dictionaries: [{'symbol': 'TATASTEEL', 'name': 'Tata Steel'}, ...]
-    # Adjust 'SYMBOL' and 'NAME OF COMPANY' if your CSV headers are slightly different
-    STOCKS_DATA = df[['SYMBOL', 'NAME OF COMPANY']].to_dict(orient='records')
-    print("✅ Stock Master List Loaded Successfully!")
-    
-except Exception as e:
-    print(f"⚠️ Error loading stocks.csv: {e}")
-    STOCKS_DATA = []
-
-# 2. Create the Search Endpoint
-@app.route('/api/search')
-def search_stocks():
-    query = request.args.get('q', '').lower()
-    if not query:
-        return jsonify([])
-
-    # Filter the list for matches (Limit to top 10 results for speed)
-    results = [
-        stock for stock in STOCKS_DATA 
-        if query in stock['SYMBOL'].lower() or query in stock['NAME OF COMPANY'].lower()
-    ]
-    return jsonify(results[:10])
-
-# --- NEW CODE END ---
 
 # ... (The rest of your existing app.py code goes here) ...
 
 # --- 🎨 CONFIGURATION ---
 st.set_page_config(page_title="InvestRight.AI", page_icon="🦁", layout="wide")
+# --- 🛠️ LOAD MASTER STOCK LIST (New Feature) ---
+@st.cache_data
+def load_stock_data():
+    try:
+        # Load the CSV file you saved
+        df = pd.read_csv('stocks.csv')
+        
+        # Clean up column names (remove extra spaces)
+        df.columns = df.columns.str.strip()
+        
+        # Create a "Search Label" so users see "TATASTEEL - Tata Steel Ltd"
+        # Adjust column names 'SYMBOL' or 'NAME OF COMPANY' if your CSV is slightly different
+        df['Search_Label'] = df['SYMBOL'] + " - " + df['NAME OF COMPANY']
+        
+        return df
+    except Exception as e:
+        # If file is missing, return empty so app doesn't crash
+        return pd.DataFrame()
 
+# Load data once when app starts
+stock_df = load_stock_data()
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
 
 # 1. IPO ENGINE (Scraper + News)
@@ -143,7 +122,21 @@ page = st.sidebar.radio("Go to", ["📈 Equity Research", "🚀 IPO & GMP", "�
 # --- PAGE 1: EQUITY RESEARCH ---
 if page == "📈 Equity Research":
     st.title("Equity Intelligence")
-    ticker = st.text_input("Enter Symbol", "ZOMATO")
+    
+    # 1. AUTOCOMPLETE SEARCH BAR
+    # This uses the stock_df we loaded at the top
+    search_label = st.selectbox(
+        "Search Stock (Type 'Tata', 'HDFC', etc.)", 
+        options=stock_df['Search_Label'].unique() if not stock_df.empty else [],
+        index=None, 
+        placeholder="Type to search..."
+    )
+
+    # Logic: If user picks something, extract symbol. If not, default to Zomato.
+    if search_label:
+        ticker = search_label.split(" - ")[0] # Extracts "TATASTEEL" from the string
+    else:
+        ticker = "ZOMATO" # Default fallback
     
     if st.button("Analyze Stock"):
         with st.spinner("Fetching fundamentals & sentiment..."):
@@ -248,4 +241,5 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
 
