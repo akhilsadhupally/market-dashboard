@@ -8,6 +8,50 @@ from bs4 import BeautifulSoup
 from mftool import Mftool
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
+import pandas as pd
+from flask import Flask, jsonify, request
+
+app = Flask(__name__)
+
+# --- NEW CODE START ---
+
+# 1. Load the Master List
+# We load this ONCE when the app starts so it's super fast
+try:
+    # Read the CSV. We only need the Symbol and Company Name.
+    # Note: Ensure your CSV has columns roughly named 'SYMBOL' and 'NAME OF COMPANY'
+    df = pd.read_csv('stocks.csv')
+    
+    # Clean up column names just in case (remove spaces)
+    df.columns = df.columns.str.strip()
+    
+    # Create a simple list of dictionaries: [{'symbol': 'TATASTEEL', 'name': 'Tata Steel'}, ...]
+    # Adjust 'SYMBOL' and 'NAME OF COMPANY' if your CSV headers are slightly different
+    STOCKS_DATA = df[['SYMBOL', 'NAME OF COMPANY']].to_dict(orient='records')
+    print("✅ Stock Master List Loaded Successfully!")
+    
+except Exception as e:
+    print(f"⚠️ Error loading stocks.csv: {e}")
+    STOCKS_DATA = []
+
+# 2. Create the Search Endpoint
+@app.route('/api/search')
+def search_stocks():
+    query = request.args.get('q', '').lower()
+    if not query:
+        return jsonify([])
+
+    # Filter the list for matches (Limit to top 10 results for speed)
+    results = [
+        stock for stock in STOCKS_DATA 
+        if query in stock['SYMBOL'].lower() or query in stock['NAME OF COMPANY'].lower()
+    ]
+    return jsonify(results[:10])
+
+# --- NEW CODE END ---
+
+# ... (The rest of your existing app.py code goes here) ...
+
 # --- 🎨 CONFIGURATION ---
 st.set_page_config(page_title="InvestRight.AI", page_icon="🦁", layout="wide")
 
@@ -204,3 +248,4 @@ elif page == "💰 Mutual Funds":
                 
                 # Fund Manager
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
+
