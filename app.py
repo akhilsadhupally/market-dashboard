@@ -15,7 +15,7 @@ st.set_page_config(page_title="InvestRight.AI", page_icon="🦁", layout="wide")
 @st.cache_data
 def load_stock_data():
     try:
-        # RAW GitHub URL (Correct)
+        # RAW GitHub URL
         url = "https://raw.githubusercontent.com/akhilsadhupally/market-dashboard/refs/heads/main/stocks.csv"
         
         # Read directly from the internet
@@ -48,11 +48,12 @@ stock_df = load_stock_data()
 
 
 # --- 🛠️ HELPER FUNCTIONS (The Engine) ---
+
 # 1. IPO ENGINE (Google Sheet Bridge)
 @st.cache_data(ttl=300)
 def get_ipo_dashboard_data():
     try:
-        # 🟢 YOUR LINK IS INSERTED HERE 👇
+        # 🟢 YOUR GOOGLE SHEET LINK IS HERE 👇
         sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSrY-WLkphYTFIp9FffqR_WfXE_Ta9E0SId-pKqF10ZaUXTZEW1rHY96ilINOkrA6IDaASwWiQl9TMI/pub?output=csv"
         
         # Read the CSV directly
@@ -65,7 +66,6 @@ def get_ipo_dashboard_data():
         new_df = pd.DataFrame()
         
         # Map columns dynamically (Find 'name', 'price', 'gmp')
-        # We look for columns containing these keywords
         col_name = next((c for c in df.columns if 'ipo' in c or 'company' in c), None)
         col_price = next((c for c in df.columns if 'price' in c), None)
         col_gmp = next((c for c in df.columns if 'gmp' in c or 'premium' in c), None)
@@ -103,6 +103,7 @@ def get_ipo_dashboard_data():
     except Exception as e:
         st.error(f"❌ Connection Error: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
 # 2. MUTUAL FUND ENGINE
 @st.cache_data(ttl=86400)
 def get_all_schemes():
@@ -320,6 +321,3 @@ elif page == "💰 Mutual Funds":
                 st.plotly_chart(fig, use_container_width=True)
                 
                 st.info(f"**Fund House:** {details['fund_house']} | **Category:** {details['scheme_category']}")
-
-
-
