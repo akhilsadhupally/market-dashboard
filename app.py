@@ -290,14 +290,13 @@ elif page == "💰 Mutual Funds":
     
     col1, col2 = st.columns(2)
     
-    # IMPROVED UI: Use index=None for clean starting state
     with col1:
         fund_a_name = st.selectbox("Select Fund A", options=scheme_names, index=None, placeholder="Search Fund A...", key="f1")
     
     with col2:
         fund_b_name = st.selectbox("Select Fund B (Optional)", options=scheme_names, index=None, placeholder="Search Fund B...", key="f2")
     
-    # LOGIC FIX: Dynamic Buttons
+    # LOGIC FIX: Dynamic Buttons & SAFE DATA ACCESS
     if fund_a_name and fund_b_name:
         if st.button("Compare Funds 🚀", type="primary"):
             with st.spinner("Crunching numbers..."):
@@ -307,14 +306,24 @@ elif page == "💰 Mutual Funds":
                 hist_b, det_b = get_mf_data(code_b)
             
             if hist_a is not None and hist_b is not None:
-                # TABS for Comparison
                 tab_metrics, tab_chart = st.tabs(["📊 Head-to-Head", "📈 Performance War"])
                 
                 with tab_metrics:
+                    # ✅ FIXED: Use .get() to avoid KeyErrors if data is missing
                     comp_data = {
                         "Metric": ["Current NAV", "Fund House", "Category", "Risk Level"],
-                        f"Fund A ({det_a['scheme_name'][:15]}...)": [f"₹{hist_a['nav'].iloc[-1]}", det_a['fund_house'], det_a['scheme_category'], det_a['scheme_risk']],
-                        f"Fund B ({det_b['scheme_name'][:15]}...)": [f"₹{hist_b['nav'].iloc[-1]}", det_b['fund_house'], det_b['scheme_category'], det_b['scheme_risk']]
+                        f"Fund A ({det_a.get('scheme_name', 'Unknown')[:15]}...)": [
+                            f"₹{hist_a['nav'].iloc[-1]}", 
+                            det_a.get('fund_house', 'N/A'), 
+                            det_a.get('scheme_category', 'N/A'), 
+                            det_a.get('scheme_risk', 'N/A')
+                        ],
+                        f"Fund B ({det_b.get('scheme_name', 'Unknown')[:15]}...)": [
+                            f"₹{hist_b['nav'].iloc[-1]}", 
+                            det_b.get('fund_house', 'N/A'), 
+                            det_b.get('scheme_category', 'N/A'), 
+                            det_b.get('scheme_risk', 'N/A')
+                        ]
                     }
                     st.dataframe(pd.DataFrame(comp_data), hide_index=True, use_container_width=True)
                 
@@ -333,9 +342,8 @@ elif page == "💰 Mutual Funds":
             
             if hist is not None:
                 curr = hist['nav'].iloc[-1]
-                st.subheader(f"{details['scheme_name']}")
+                st.subheader(f"{details.get('scheme_name', 'Fund Details')}")
                 
-                # TABS for Single Fund
                 t1, t2, t3 = st.tabs(["📈 Performance", "📋 Details", "🗣️ Sentiment"])
                 
                 with t1:
@@ -345,12 +353,14 @@ elif page == "💰 Mutual Funds":
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with t2:
-                    st.write(f"**Fund House:** {details['fund_house']}")
-                    st.write(f"**Category:** {details['scheme_category']}")
+                    st.write(f"**Fund House:** {details.get('fund_house', 'N/A')}")
+                    st.write(f"**Category:** {details.get('scheme_category', 'N/A')}")
                     st.write(f"**Risk:** {details.get('scheme_risk', 'N/A')}")
                 
                 with t3:
-                    mf_buzz = get_social_buzz(f"{details['fund_house']} Mutual Fund")
+                    # Robust search name
+                    fh = details.get('fund_house', '')
+                    mf_buzz = get_social_buzz(f"{fh} Mutual Fund")
                     if not mf_buzz.empty:
                         for i, r in mf_buzz.iterrows():
                             st.markdown(f"[{r['Title']}]({r['Link']})")
