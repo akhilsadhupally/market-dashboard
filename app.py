@@ -7,6 +7,8 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 from mftool import Mftool
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from collections import Counter
+import re
 import deprecated 
 
 # --- 🎨 CONFIGURATION ---
@@ -33,13 +35,102 @@ def load_stock_data():
             return pd.DataFrame()
         return df
     except Exception as e:
-        # Fallback data
         data = {'Search_Label': ['TATASTEEL - Tata Steel Ltd', 'RELIANCE - Reliance Industries', 'ZOMATO - Zomato Ltd']}
         return pd.DataFrame(data)
 
 stock_df = load_stock_data()
 
-# --- 🛠️ ENGINE ROOM ---
+# --- 🧠 INTELLIGENT SENTIMENT ENGINE (The Core Upgrade) ---
+@st.cache_data(ttl=600)
+def get_sentiment_report(query_term):
+    """
+    Scrapes news/social media, analyzes sentiment, AND summarizes the conversation.
+    Returns a dictionary with Score, Rating, Summary, and Raw Links.
+    """
+    queries = [
+        f"site:reddit.com {query_term} discussion",
+        f"site:twitter.com {query_term} sentiment",
+        f"{query_term} market news india",
+        f"{query_term} analysis review"
+    ]
+    
+    combined_data = []
+    all_titles = []
+    analyzer = SentimentIntensityAnalyzer()
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    # 1. FETCH DATA
+    for q in queries:
+        url = f"https://news.google.com/rss/search?q={q}&hl=en-IN&gl=IN&ceid=IN:en"
+        try:
+            r = requests.get(url, headers=headers, timeout=4)
+            soup = BeautifulSoup(r.text, 'xml') 
+            items = soup.find_all('item')[:5] # Fetch top 5 per source
+            for item in items:
+                title = item.title.text
+                link = item.link.text
+                pub_date = item.pubDate.text if item.pubDate else ""
+                
+                # Identify Source
+                if "reddit" in q: source = "Reddit"
+                elif "twitter" in q: source = "X (Twitter)"
+                else: source = "News Media"
+                
+                # Score
+                score = analyzer.polarity_scores(title)['compound']
+                combined_data.append({'Title': title, 'Source': source, 'Score': score, 'Link': link, 'Date': pub_date})
+                all_titles.append(title)
+        except:
+            continue
+            
+    if not combined_data:
+        return None
+
+    df = pd.DataFrame(combined_data)
+    
+    # 2. CALCULATE AGGREGATE SCORES
+    avg_score = df['Score'].mean() # Range -1 to 1
+    
+    # Convert to 0-100 Scale for UI
+    # -1 becomes 0, 0 becomes 50, +1 becomes 100
+    sentiment_score = int((avg_score + 1) * 50)
+    
+    # Determine Professional Rating
+    if sentiment_score >= 75: rating = "Strong Buy / Bullish 🚀"
+    elif sentiment_score >= 60: rating = "Positive Accumulate 📈"
+    elif sentiment_score >= 40: rating = "Neutral / Hold ⚖️"
+    elif sentiment_score >= 25: rating = "Weak / Cautious ⚠️"
+    else: rating = "Strong Sell / Bearish 🩸"
+
+    # 3. GENERATE "TALKING POINTS" SUMMARY
+    # Extract keywords to see what people are talking about
+    text_blob = " ".join(all_titles).lower()
+    # Remove common useless words
+    ignore_words = ['stock', 'share', 'price', 'market', 'india', 'news', 'analysis', 'review', 'target', 'today', 'latest', 'for', 'the', 'and', 'with', 'ipo', 'fund', 'mutual']
+    words = re.findall(r'\w+', text_blob)
+    filtered_words = [w for w in words if w not in ignore_words and len(w) > 3]
+    
+    # Find most common topics (e.g., "profit", "debt", "growth")
+    common_topics = [word for word, count in Counter(filtered_words).most_common(5)]
+    topic_str = ", ".join(common_topics).title()
+    
+    summary_text = f"Market discourse is currently focused on **{topic_str}**. "
+    if avg_score > 0.2:
+        summary_text += "Overall tone is optimistic, driven by positive news coverage and community support."
+    elif avg_score < -0.2:
+        summary_text += "Sentiment is weighed down by negative headlines or caution in community discussions."
+    else:
+        summary_text += "Opinions are mixed, indicating a period of consolidation or uncertainty."
+
+    return {
+        "score_val": sentiment_score, # 0-100
+        "rating": rating,
+        "summary": summary_text,
+        "topics": common_topics,
+        "data": df
+    }
+
+# --- 🛠️ OTHER ENGINES (IPO & MF) ---
 
 # 1. IPO ENGINE (Google Sheet Bridge)
 @st.cache_data(ttl=300)
@@ -130,36 +221,6 @@ def get_stock_data(ticker):
     except Exception as e:
         return None, None, None, None, str(e)
 
-# 4. SOCIAL BUZZ ENGINE
-@st.cache_data(ttl=600)
-def get_social_buzz(query_term):
-    queries = [
-        f"site:reddit.com {query_term} discussion review",
-        f"site:twitter.com {query_term} sentiment",
-        f"{query_term} news india"
-    ]
-    combined_data = []
-    analyzer = SentimentIntensityAnalyzer()
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    for q in queries:
-        url = f"https://news.google.com/rss/search?q={q}&hl=en-IN&gl=IN&ceid=IN:en"
-        try:
-            r = requests.get(url, headers=headers, timeout=4)
-            soup = BeautifulSoup(r.text, 'xml') 
-            items = soup.find_all('item')[:4]
-            for item in items:
-                title = item.title.text
-                link = item.link.text
-                if "reddit" in q: source = "Reddit 🔴"
-                elif "twitter" in q: source = "X (Twitter) ⚫"
-                else: source = "News 📰"
-                score = analyzer.polarity_scores(title)['compound']
-                combined_data.append({'Title': title, 'Source': source, 'Score': score, 'Link': link})
-        except:
-            continue
-    return pd.DataFrame(combined_data)
-
 # --- 📱 APP UI START ---
 st.sidebar.title("🦁 InvestRight.AI")
 page = st.sidebar.radio("Go to", ["📈 Equity Research", "🚀 IPO & GMP", "💰 Mutual Funds"])
@@ -178,15 +239,17 @@ if page == "📈 Equity Research":
     if search_label:
         ticker = search_label.split(" - ")[0] 
         if st.button("Analyze Stock"):
-            with st.spinner("Analyzing Fundamentals & Sentiment..."):
+            with st.spinner("Compiling Intelligence Report..."):
                 price, chg, hist, fund, stat = get_stock_data(ticker)
+                # Fetch INTELLIGENT SENTIMENT
+                sentiment = get_sentiment_report(f"{ticker} stock")
             
             if stat == "Success":
                 # Header
                 st.metric(f"{search_label}", f"₹{price:,.2f}", f"{chg:+.2f}%")
                 
-                # TABS UI (Cleaner Look)
-                tab1, tab2, tab3 = st.tabs(["📊 Fundamentals", "📈 Technical Chart", "🗣️ Social Buzz"])
+                # TABS UI
+                tab1, tab2, tab3 = st.tabs(["📊 Fundamentals", "📈 Technicals", "🧠 Sentiment Intelligence"])
                 
                 with tab1:
                     c1, c2, c3, c4 = st.columns(4)
@@ -206,16 +269,31 @@ if page == "📈 Equity Research":
                     st.plotly_chart(fig, use_container_width=True)
 
                 with tab3:
-                    buzz_df = get_social_buzz(ticker)
-                    if not buzz_df.empty:
-                        for i, row in buzz_df.head(5).iterrows():
-                            with st.container():
-                                color = "green" if row['Score'] > 0 else "red" if row['Score'] < 0 else "grey"
-                                st.markdown(f"**{row['Source']}** • [{row['Title']}]({row['Link']})")
-                                st.caption(f"Sentiment Score: {row['Score']}")
-                                st.divider()
+                    if sentiment:
+                        # 1. SCORECARD
+                        st.subheader(f"Rating: {sentiment['rating']}")
+                        st.progress(sentiment['score_val'] / 100)
+                        st.caption(f"Confidence Score: {sentiment['score_val']}/100")
+                        
+                        st.markdown("---")
+                        
+                        # 2. AI SUMMARY
+                        st.info(f"**💡 AI Summary:** {sentiment['summary']}")
+                        
+                        # 3. DETAILS
+                        c_buzz, c_feed = st.columns([1, 2])
+                        with c_buzz:
+                            st.write("**Top Talking Points:**")
+                            for topic in sentiment['topics']:
+                                st.code(topic)
+
+                        with c_feed:
+                            st.write("**Source Feeds:**")
+                            for i, row in sentiment['data'].head(5).iterrows():
+                                icon = "🔴" if row['Source'] == "Reddit" else "⚫" if row['Source'] == "X (Twitter)" else "📰"
+                                st.markdown(f"{icon} [{row['Title']}]({row['Link']})")
                     else:
-                        st.info("No chatter found.")
+                        st.warning("Not enough data to generate a reliable sentiment rating.")
 
 # --- PAGE 2: IPO ---
 elif page == "🚀 IPO & GMP":
@@ -225,8 +303,7 @@ elif page == "🚀 IPO & GMP":
         ipo_df = get_ipo_dashboard_data()
 
     if not ipo_df.empty:
-        # Overview Tab vs Deep Dive Tab
-        tab_main, tab_dive = st.tabs(["🔥 Active Dashboard", "🔍 Deep Dive & Peer Scout"])
+        tab_main, tab_dive = st.tabs(["🔥 Active Dashboard", "🔍 Deep Dive & Sentiment"])
         
         with tab_main:
             st.dataframe(
@@ -243,8 +320,12 @@ elif page == "🚀 IPO & GMP":
             selected_ipo = st.selectbox("Select IPO:", options=ipo_df['IPO Name'].unique(), index=None, placeholder="Pick an IPO to analyze...")
             
             if selected_ipo:
-                row = ipo_df[ipo_df['IPO Name'] == selected_ipo].iloc[0]
+                # Fetch Sentiment for IPO
+                with st.spinner(f"Analyzing Market Mood for {selected_ipo}..."):
+                    row = ipo_df[ipo_df['IPO Name'] == selected_ipo].iloc[0]
+                    sentiment = get_sentiment_report(f"{selected_ipo} IPO")
                 
+                # METRICS
                 c1, c2, c3 = st.columns(3)
                 c1.metric("GMP Value", f"₹{row['GMP_Value']}")
                 c2.metric("Est. Listing", f"₹{row['Price_Value'] + row['GMP_Value']}")
@@ -252,32 +333,24 @@ elif page == "🚀 IPO & GMP":
                 
                 st.markdown("---")
                 
-                # Split Peer Scout and Social into columns
-                col_peer, col_social = st.columns(2)
+                # SENTIMENT REPORT
+                st.subheader("🧠 Public Sentiment & Rating")
                 
-                with col_peer:
-                    st.subheader("🏢 Peer Scout")
-                    st.info("Compare with a listed rival.")
-                    peer_ticker = st.text_input("Competitor Symbol", placeholder="e.g. ZOMATO")
-                    if peer_ticker:
-                        with st.spinner("Checking Peer..."):
-                            pprice, pchg, phist, pfund, pstat = get_stock_data(peer_ticker)
-                        if pstat == "Success":
-                            st.success(f"**{peer_ticker.upper()}**")
-                            st.write(f"Sector P/E: **{pfund['P/E Ratio']}**")
-                            st.line_chart(phist['Close'], height=200)
-                        else:
-                            st.error("Symbol not found.")
-
-                with col_social:
-                    st.subheader("🗣️ Public Mood")
-                    ipo_buzz = get_social_buzz(f"{selected_ipo} IPO")
-                    if not ipo_buzz.empty:
-                        for i, r in ipo_buzz.iterrows():
-                            st.markdown(f"[{r['Title']}]({r['Link']})")
-                            st.caption(f"Source: {r['Source']}")
-                    else:
-                        st.warning("No discussions yet.")
+                if sentiment:
+                    col_score, col_text = st.columns([1, 2])
+                    
+                    with col_score:
+                        st.metric("Sentiment Score", f"{sentiment['score_val']}/100")
+                        st.caption(sentiment['rating'])
+                        st.progress(sentiment['score_val'] / 100)
+                    
+                    with col_text:
+                        st.success(f"**Analysis:** {sentiment['summary']}")
+                        st.write("Recent Discussions:")
+                        for i, r in sentiment['data'].head(3).iterrows():
+                            st.markdown(f"- [{r['Title']}]({r['Link']})")
+                else:
+                    st.info("No sufficient public discussion data found for this IPO yet.")
 
 # --- PAGE 3: MUTUAL FUNDS ---
 elif page == "💰 Mutual Funds":
@@ -286,84 +359,75 @@ elif page == "💰 Mutual Funds":
     all_schemes = get_all_schemes()
     scheme_names = list(all_schemes.values())
     
-    st.info("Select up to two funds to analyze or compare.")
+    st.info("Select a fund to see its Smart Sentiment Rating.")
     
     col1, col2 = st.columns(2)
-    
     with col1:
         fund_a_name = st.selectbox("Select Fund A", options=scheme_names, index=None, placeholder="Search Fund A...", key="f1")
-    
     with col2:
         fund_b_name = st.selectbox("Select Fund B (Optional)", options=scheme_names, index=None, placeholder="Search Fund B...", key="f2")
     
-    # LOGIC FIX: Dynamic Buttons & SAFE DATA ACCESS
-    if fund_a_name and fund_b_name:
-        if st.button("Compare Funds 🚀", type="primary"):
-            with st.spinner("Crunching numbers..."):
+    # LOGIC
+    if fund_a_name:
+        # Determine mode
+        mode = "Compare" if fund_b_name else "Analyze"
+        btn_label = "Compare Funds 🚀" if mode == "Compare" else "Analyze Fund A"
+        
+        if st.button(btn_label, type="primary"):
+            with st.spinner("Analyzing Performance & Sentiment..."):
                 code_a = list(all_schemes.keys())[list(all_schemes.values()).index(fund_a_name)]
-                code_b = list(all_schemes.keys())[list(all_schemes.values()).index(fund_b_name)]
                 hist_a, det_a = get_mf_data(code_a)
-                hist_b, det_b = get_mf_data(code_b)
-            
-            if hist_a is not None and hist_b is not None:
-                tab_metrics, tab_chart = st.tabs(["📊 Head-to-Head", "📈 Performance War"])
                 
-                with tab_metrics:
-                    # ✅ FIXED: Use .get() to avoid KeyErrors if data is missing
-                    comp_data = {
-                        "Metric": ["Current NAV", "Fund House", "Category", "Risk Level"],
-                        f"Fund A ({det_a.get('scheme_name', 'Unknown')[:15]}...)": [
-                            f"₹{hist_a['nav'].iloc[-1]}", 
-                            det_a.get('fund_house', 'N/A'), 
-                            det_a.get('scheme_category', 'N/A'), 
-                            det_a.get('scheme_risk', 'N/A')
-                        ],
-                        f"Fund B ({det_b.get('scheme_name', 'Unknown')[:15]}...)": [
-                            f"₹{hist_b['nav'].iloc[-1]}", 
-                            det_b.get('fund_house', 'N/A'), 
-                            det_b.get('scheme_category', 'N/A'), 
-                            det_b.get('scheme_risk', 'N/A')
-                        ]
-                    }
-                    st.dataframe(pd.DataFrame(comp_data), hide_index=True, use_container_width=True)
-                
-                with tab_chart:
-                    df_a = hist_a.tail(365)[['date', 'nav']].rename(columns={'nav': 'Fund A'})
-                    df_b = hist_b.tail(365)[['date', 'nav']].rename(columns={'nav': 'Fund B'})
-                    merged = pd.merge(df_a, df_b, on='date', how='inner')
-                    fig = px.line(merged, x='date', y=['Fund A', 'Fund B'], title="NAV 1-Year Trajectory")
-                    st.plotly_chart(fig, use_container_width=True)
+                # Fetch Sentiment for Fund A
+                fh_a = det_a.get('fund_house', '')
+                sent_a = get_sentiment_report(f"{fh_a} Mutual Fund")
 
-    elif fund_a_name:
-        if st.button("Analyze Fund A", type="primary"):
-            with st.spinner("Fetching Data..."):
-                code_a = list(all_schemes.keys())[list(all_schemes.values()).index(fund_a_name)]
-                hist, details = get_mf_data(code_a)
+                if mode == "Compare":
+                    code_b = list(all_schemes.keys())[list(all_schemes.values()).index(fund_b_name)]
+                    hist_b, det_b = get_mf_data(code_b)
             
-            if hist is not None:
-                curr = hist['nav'].iloc[-1]
-                st.subheader(f"{details.get('scheme_name', 'Fund Details')}")
+            if hist_a is not None:
+                # TABS
+                tabs = st.tabs(["📊 Overview", "🧠 Smart Sentiment", "📈 Performance"])
                 
-                t1, t2, t3 = st.tabs(["📈 Performance", "📋 Details", "🗣️ Sentiment"])
-                
-                with t1:
-                    st.metric("Current NAV", f"₹{curr}")
-                    fig = px.line(hist.tail(365), x='date', y='nav', title="1-Year Performance")
-                    fig.update_traces(line_color='#8e44ad', line_width=3)
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with t2:
-                    st.write(f"**Fund House:** {details.get('fund_house', 'N/A')}")
-                    st.write(f"**Category:** {details.get('scheme_category', 'N/A')}")
-                    st.write(f"**Risk:** {details.get('scheme_risk', 'N/A')}")
-                
-                with t3:
-                    # Robust search name
-                    fh = details.get('fund_house', '')
-                    mf_buzz = get_social_buzz(f"{fh} Mutual Fund")
-                    if not mf_buzz.empty:
-                        for i, r in mf_buzz.iterrows():
-                            st.markdown(f"[{r['Title']}]({r['Link']})")
-                            st.caption(f"Source: {r['Source']}")
+                with tabs[0]:
+                    # Overview Table
+                    if mode == "Compare" and hist_b is not None:
+                        comp_data = {
+                            "Metric": ["NAV", "Risk", "Fund House"],
+                            f"Fund A": [f"₹{hist_a['nav'].iloc[-1]}", det_a.get('scheme_risk', 'N/A'), det_a.get('fund_house', 'N/A')],
+                            f"Fund B": [f"₹{hist_b['nav'].iloc[-1]}", det_b.get('scheme_risk', 'N/A'), det_b.get('fund_house', 'N/A')]
+                        }
+                        st.dataframe(pd.DataFrame(comp_data), hide_index=True, use_container_width=True)
                     else:
-                        st.info("No buzz found.")
+                        st.metric("NAV", f"₹{hist_a['nav'].iloc[-1]}")
+                        st.write(f"**Fund House:** {det_a.get('fund_house')}")
+                        st.write(f"**Category:** {det_a.get('scheme_category')}")
+                
+                with tabs[1]:
+                    # SENTIMENT TAB (The New Feature)
+                    st.subheader(f"Sentiment for: {det_a.get('fund_house')}")
+                    
+                    if sent_a:
+                        c1, c2 = st.columns([1, 2])
+                        with c1:
+                            st.metric("Trust Score", f"{sent_a['score_val']}/100")
+                            st.progress(sent_a['score_val'] / 100)
+                            st.caption(sent_a['rating'])
+                        with c2:
+                            st.info(f"**Community Verdict:** {sent_a['summary']}")
+                            st.write("**Key Topics:** " + ", ".join(sent_a['topics']))
+                    else:
+                        st.warning("No sentiment data available.")
+
+                with tabs[2]:
+                    # Chart Logic
+                    if mode == "Compare" and hist_b is not None:
+                        df_a = hist_a.tail(365)[['date', 'nav']].rename(columns={'nav': 'Fund A'})
+                        df_b = hist_b.tail(365)[['date', 'nav']].rename(columns={'nav': 'Fund B'})
+                        merged = pd.merge(df_a, df_b, on='date', how='inner')
+                        fig = px.line(merged, x='date', y=['Fund A', 'Fund B'], title="Comparative Returns")
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        fig = px.line(hist_a.tail(365), x='date', y='nav', title="1-Year Trend")
+                        st.plotly_chart(fig, use_container_width=True)
