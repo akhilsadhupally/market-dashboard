@@ -7,9 +7,8 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 from mftool import Mftool
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from collections import Counter
-import re
-import deprecated 
+import time
+import random
 
 # --- 🎨 PRO CONFIGURATION ---
 st.set_page_config(
@@ -19,14 +18,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for "MoneyControl" style polish
+# Custom CSS for Professional UI
 st.markdown("""
     <style>
     .stMetric {
-        background-color: #f9f9f9;
+        background-color: #f8f9fa;
         padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     .stTabs [data-baseweb="tab-list"] {
         gap: 20px;
@@ -36,6 +36,7 @@ st.markdown("""
         white-space: pre-wrap;
         border-radius: 4px 4px 0px 0px;
         font-weight: 600;
+        font-size: 16px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -45,10 +46,8 @@ TOOLTIPS = {
     "PE": "Price-to-Earnings Ratio: Measures if a stock is overvalued. Lower is generally better (cheaper).",
     "DE": "Debt-to-Equity: How much debt the company has vs. shareholder money. >2 is risky.",
     "ROE": "Return on Equity: How efficiently the company uses your money to generate profit. >15% is good.",
-    "Alpha": "Performance vs Benchmark. Positive Alpha means it beat the market index.",
     "GMP": "Grey Market Premium: The price unofficial traders are paying before listing. High GMP = High Demand.",
-    "NAV": "Net Asset Value: The price of one unit of the Mutual Fund.",
-    "Score": "AI Confidence Score (0-100) based on sentiment intensity from News & Social Media."
+    "Score": "AI Confidence Score (0-100) derived from analyzing news headlines and social chatter."
 }
 
 # --- 🛠️ DATA ENGINE ---
@@ -70,58 +69,62 @@ def load_stock_list():
 
 stock_df = load_stock_list()
 
-# --- 🧠 SENTIMENT ENGINE (The "Reliable Rating" Core) ---
+# --- 🧠 SENTIMENT ENGINE (DuckDuckGo Fix) ---
+# We switched to DuckDuckGo because Google RSS was blocking the cloud server.
 @st.cache_data(ttl=600)
 def get_sentiment_report(query_term):
-    # We use 3 distinct sources for a "Technically Sound" rating
-    queries = [
-        f"site:moneycontrol.com {query_term} analysis", 
-        f"site:reddit.com {query_term} discussion",
-        f"{query_term} financial news india"
-    ]
+    # Search for news and discussions
+    url = f"https://html.duckduckgo.com/html/?q={query_term} stock news sentiment"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     
     combined_data = []
     analyzer = SentimentIntensityAnalyzer()
-    headers = {"User-Agent": "Mozilla/5.0"}
     
-    all_titles = []
-
-    for q in queries:
-        url = f"https://news.google.com/rss/search?q={q}&hl=en-IN&gl=IN&ceid=IN:en"
-        try:
-            r = requests.get(url, headers=headers, timeout=5)
-            soup = BeautifulSoup(r.text, 'xml') 
-            items = soup.find_all('item')[:4]
-            for item in items:
-                title = item.title.text
-                link = item.link.text
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        
+        # Parse DuckDuckGo Results
+        results = soup.find_all('div', class_='result__body')[:6]
+        
+        for res in results:
+            title_tag = res.find('a', class_='result__a')
+            if title_tag:
+                title = title_tag.text
+                link = title_tag['href']
+                snippet = res.find('a', class_='result__snippet').text if res.find('a', class_='result__snippet') else ""
                 
-                # Assign "Credibility Weights"
-                if "reddit" in q: 
+                # Determine Source Type
+                if "reddit" in link or "reddit" in title.lower():
                     source = "Reddit 💬"
-                    weight = 0.5  # Lower weight for social
-                elif "moneycontrol" in q:
-                    source = "MoneyControl 📊"
-                    weight = 1.5  # High weight for reliable data
-                else: 
-                    source = "News 📰"
+                    weight = 0.6
+                elif "moneycontrol" in link or "economictimes" in link:
+                    source = "Financial News 📰"
+                    weight = 1.5
+                else:
+                    source = "Web News 🌐"
                     weight = 1.0
                 
-                score = analyzer.polarity_scores(title)['compound']
+                # Analyze Sentiment
+                score = analyzer.polarity_scores(title + " " + snippet)['compound']
                 combined_data.append({'Title': title, 'Source': source, 'Score': score, 'Link': link, 'Weight': weight})
-                all_titles.append(title)
-        except:
-            continue
-            
+                
+    except Exception as e:
+        print(f"Sentiment Error: {e}")
+        return None
+
     if not combined_data: return None
 
     df = pd.DataFrame(combined_data)
     
-    # Weighted Scoring Calculation
+    # Calculate Weighted Score
     weighted_score = (df['Score'] * df['Weight']).sum() / df['Weight'].sum()
-    final_score = int((weighted_score + 1) * 50) # Scale to 0-100
+    final_score = int((weighted_score + 1) * 50) # Scale -1..1 to 0..100
     
-    # Generate Verdict
+    # Professional Rating
     if final_score >= 80: rating = "Strong Buy (Bullish) 🟢"
     elif final_score >= 60: rating = "Accumulate (Positive) 📈"
     elif final_score >= 40: rating = "Hold (Neutral) ⚖️"
@@ -130,38 +133,51 @@ def get_sentiment_report(query_term):
     
     return {"score": final_score, "rating": rating, "data": df, "count": len(df)}
 
-# --- 📊 EQUITY ENGINE (Robust Fetching) ---
+# --- 📊 EQUITY ENGINE (Fast_Info Fix) ---
 @st.cache_data(ttl=300)
 def get_stock_fundamentals(ticker):
     try:
         symbol = ticker.upper() if ticker.endswith(".NS") else f"{ticker.upper()}.NS"
         stock = yf.Ticker(symbol)
         
-        # 1. Price Data (Crucial)
+        # 1. Price Data
         hist = stock.history(period="1y")
-        if hist.empty: return None 
+        if hist.empty: return None
         
         current = hist['Close'].iloc[-1]
         prev = hist['Close'].iloc[-2]
         change_pct = ((current - prev) / prev) * 100
         
-        # 2. Fundamentals (With Fallback)
+        # 2. Robust Fundamentals (Using fast_info)
+        # fast_info is less likely to be blocked than info
+        fi = stock.fast_info
         metrics = {}
+        
         try:
+            # Try getting detailed info first
             info = stock.info
             metrics = {
-                "Market Cap": info.get("marketCap", "N/A"),
+                "Market Cap": info.get("marketCap", fi.market_cap),
                 "PE": info.get("trailingPE", "N/A"),
                 "Div Yield": info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0,
-                "52W High": info.get("fiftyTwoWeekHigh", "N/A"),
+                "52W High": info.get("fiftyTwoWeekHigh", fi.year_high),
                 "DebtToEquity": info.get("debtToEquity", "N/A"),
                 "ROE": info.get("returnOnEquity", 0),
                 "Sector": info.get("sector", "N/A"),
-                "Summary": info.get("longBusinessSummary", "Summary unavailable.")
+                "Summary": info.get("longBusinessSummary", "Summary temporarily unavailable from source.")
             }
         except:
-            # If Yahoo blocks us, return "Unavailable" but keep the app running
-            metrics = {k: "N/A" for k in ["Market Cap", "PE", "Div Yield", "52W High", "DebtToEquity", "ROE", "Sector", "Summary"]}
+            # Fallback to fast_info if info fails
+            metrics = {
+                "Market Cap": fi.market_cap,
+                "PE": "N/A", # fast_info doesn't have PE
+                "Div Yield": 0,
+                "52W High": fi.year_high,
+                "DebtToEquity": "N/A",
+                "ROE": 0,
+                "Sector": "N/A",
+                "Summary": "Fundamental data restricted by data provider."
+            }
             
         return {"price": current, "change": change_pct, "hist": hist, "metrics": metrics}
     except Exception as e:
@@ -238,9 +254,9 @@ if page == "📈 Equity Research":
     if search:
         ticker = search.split(" - ")[0]
         if st.button("Generate Report", type="primary"):
-            with st.spinner(f"Analyzing {ticker}..."):
+            with st.spinner(f"Fetching Intelligence for {ticker}..."):
                 data = get_stock_fundamentals(ticker)
-                # Fetch Sentiment Explicitly
+                # FORCE SENTIMENT FETCH
                 sentiment = get_sentiment_report(f"{ticker} stock")
             
             if data:
@@ -250,48 +266,41 @@ if page == "📈 Equity Research":
                 c2.metric("Sector", m.get('Sector', 'N/A'))
                 
                 # TABS
-                tab_fund, tab_news = st.tabs(["📊 Fundamentals", "🧠 Smart Sentiment"])
+                tab_fund, tab_sent = st.tabs(["📊 Fundamentals", "🧠 Social Sentiment & Buzz"])
                 
                 with tab_fund:
-                    # Robust display of metrics
+                    # Robust display: Check if data is 'N/A' before formatting
                     fc1, fc2, fc3, fc4 = st.columns(4)
                     
-                    pe = m.get('PE')
-                    pe_show = f"{pe:.2f}" if isinstance(pe, (int, float)) else "N/A"
-                    fc1.metric("P/E Ratio", pe_show, help=TOOLTIPS['PE'])
-                    
-                    de = m.get('DebtToEquity')
-                    de_show = f"{de:.2f}" if isinstance(de, (int, float)) else "N/A"
-                    fc2.metric("Debt/Equity", de_show, help=TOOLTIPS['DE'])
-                    
-                    roe = m.get('ROE')
-                    roe_show = f"{roe*100:.2f}%" if isinstance(roe, (int, float)) else "N/A"
-                    fc3.metric("ROE %", roe_show, help=TOOLTIPS['ROE'])
-                    
-                    div = m.get('Div Yield')
-                    div_show = f"{div:.2f}%" if isinstance(div, (int, float)) else "N/A"
-                    fc4.metric("Div Yield", div_show)
+                    # Safe formatting helpers
+                    def safe_fmt(val, is_pct=False):
+                        if isinstance(val, (int, float)):
+                            return f"{val:.2f}%" if is_pct else f"{val:.2f}"
+                        return "N/A"
+
+                    fc1.metric("P/E Ratio", safe_fmt(m.get('PE')), help=TOOLTIPS['PE'])
+                    fc2.metric("Debt/Equity", safe_fmt(m.get('DebtToEquity')), help=TOOLTIPS['DE'])
+                    fc3.metric("ROE %", safe_fmt(m.get('ROE')*100 if isinstance(m.get('ROE'), (int,float)) else "N/A", True), help=TOOLTIPS['ROE'])
+                    fc4.metric("Div Yield", safe_fmt(m.get('Div Yield'), True))
                     
                     st.line_chart(data['hist']['Close'])
                     st.info(f"**Business Summary:** {m.get('Summary', 'N/A')}")
 
-                with tab_news:
-                    # SOCIAL BUZZ SECTION
-                    st.subheader("Reliable Sentiment Analysis")
+                with tab_sent:
                     if sentiment:
                         sc1, sc2 = st.columns([1,2])
                         with sc1:
-                            st.metric("AI Confidence Score", f"{sentiment['score']}/100", help=TOOLTIPS['Score'])
+                            st.metric("AI Sentiment Score", f"{sentiment['score']}/100", help=TOOLTIPS['Score'])
                             st.progress(sentiment['score']/100)
-                            st.write(f"**Verdict:** {sentiment['rating']}")
+                            st.caption(f"**Rating:** {sentiment['rating']}")
                         with sc2:
-                            st.write(f"**Based on {sentiment['count']} analyzed sources:**")
+                            st.write(f"**Social Buzz & News Feed ({sentiment['count']} Sources):**")
                             for r in sentiment['data'].head(5).to_dict('records'):
                                 st.markdown(f"• **{r['Source']}**: [{r['Title']}]({r['Link']})")
                     else:
-                        st.warning("No sentiment data found. Try refreshing or checking connectivity.")
+                        st.warning("No social buzz detected for this stock right now.")
             else:
-                st.error("Could not fetch stock data. The API might be rate-limiting requests.")
+                st.error("Data Unavailable: The stock symbol might be delisted or the API is currently blocked.")
 
 # --- PAGE 2: IPO ---
 elif page == "🚀 IPO Intelligence":
@@ -318,7 +327,7 @@ elif page == "🚀 IPO Intelligence":
                 gc1, gc2 = st.columns(2)
                 listing_price = row['Price_Val'] + row['GMP_Val']
                 
-                # Fix for 0.0% gain display
+                # Logic: Don't show 0.0% if GMP is missing
                 gain_display = f"{row['Gain%']:.1f}%"
                 if row['GMP_Val'] == 0:
                     gain_display = "No GMP Trend Yet"
@@ -328,26 +337,26 @@ elif page == "🚀 IPO Intelligence":
                 
                 st.markdown("---")
                 
-                # IPO SENTIMENT SECTION
-                st.subheader("🧠 IPO Social Buzz & Sentiment")
-                with st.spinner("Scanning Market Mood..."):
+                # IPO SENTIMENT
+                st.subheader("🧠 IPO Sentiment Rating")
+                with st.spinner("Analyzing Market Mood..."):
                     ipo_sent = get_sentiment_report(f"{sel_ipo} IPO")
                 
                 if ipo_sent:
                     ic1, ic2 = st.columns([1,2])
                     with ic1:
-                        st.metric("Hype Score", f"{ipo_sent['score']}/100", help="Crowd enthusiasm rating")
+                        st.metric("Hype Score", f"{ipo_sent['score']}/100")
                         st.progress(ipo_sent['score']/100)
                         st.caption(ipo_sent['rating'])
                     with ic2:
-                        st.write("**What people are saying:**")
+                        st.write("**Recent Chatter:**")
                         for r in ipo_sent['data'].head(3).to_dict('records'):
                             st.markdown(f"• **{r['Source']}**: [{r['Title']}]({r['Link']})")
                 else:
-                    st.info("No active discussions found for this IPO.")
+                    st.info("No active sentiment data found.")
 
                 st.markdown("---")
-                st.subheader("🏢 Fundamentals Check")
+                st.subheader("🏢 Peer Comparison")
                 peer = st.text_input("Compare with Listed Competitor (e.g. ZOMATO)", placeholder="Enter Symbol...")
                 
                 if peer:
@@ -358,9 +367,9 @@ elif page == "🚀 IPO Intelligence":
                         pe = pdata['metrics'].get('PE')
                         pe_show = f"{pe:.2f}" if isinstance(pe, (int, float)) else "N/A"
                         st.write(f"Competitor P/E Ratio: **{pe_show}**")
-                        st.caption("If the IPO's valuation is higher than this, be cautious.")
+                        st.caption("Lower P/E than IPO implies the IPO might be expensive.")
                     else:
-                        st.error("Competitor symbol not found. Try adding '.NS' (e.g. ZOMATO.NS)")
+                        st.error("Competitor symbol not found.")
 
 # --- PAGE 3: MUTUAL FUNDS ---
 elif page == "💰 Mutual Funds":
@@ -380,7 +389,7 @@ elif page == "💰 Mutual Funds":
             code_a = list(schemes.keys())[list(schemes.values()).index(fund_a)]
             with st.spinner("Fetching Data..."):
                 df_a, det_a, ret_a = get_mf_deep_dive(code_a)
-                # Fetch Sentiment for Single Fund
+                # Fetch Sentiment for Fund A
                 sent_a = get_sentiment_report(f"{det_a['fund_house']} Mutual Fund")
                 
                 if fund_b: # COMPARE MODE
@@ -401,11 +410,11 @@ elif page == "💰 Mutual Funds":
                         merged = pd.merge(df_a[['date','nav']], df_b[['date','nav']], on='date', suffixes=('_A', '_B'))
                         st.line_chart(merged.set_index('date'))
                 
-                else: # SINGLE MODE (FIXED!)
+                else: # SINGLE MODE
                     if df_a is not None:
                         st.subheader(f"📈 Performance: {det_a.get('scheme_name')}")
                         
-                        # 1. RETURNS TABLE (Now Visible)
+                        # 1. RETURNS TABLE (RESTORED HERE)
                         rc1, rc2, rc3, rc4 = st.columns(4)
                         rc1.metric("1Y Return", f"{ret_a['1Y']:.2f}%")
                         rc2.metric("3Y Return", f"{ret_a['3Y']:.2f}%")
@@ -413,22 +422,21 @@ elif page == "💰 Mutual Funds":
                         rc4.metric("All Time", f"{ret_a['All']:.2f}%")
                         
                         st.line_chart(df_a.set_index('date')['nav'])
-                        
                         st.write(f"**Category:** {det_a.get('scheme_category', 'N/A')}")
-                        st.write(f"**Fund House:** {det_a.get('fund_house', 'N/A')}")
                         
-                        # 2. SENTIMENT & BUZZ (Restored)
+                        # 2. SENTIMENT SECTION (RESTORED HERE)
                         st.markdown("---")
                         st.subheader(f"📰 News & Sentiment: {det_a.get('fund_house')}")
+                        
                         if sent_a:
                             sc1, sc2 = st.columns([1,2])
                             with sc1:
-                                st.metric("Trust Score", f"{sent_a['score']}/100")
+                                st.metric("Trust Score", f"{sent_a['score']}/100", help=TOOLTIPS['Score'])
                                 st.progress(sent_a['score']/100)
                                 st.caption(sent_a['rating'])
                             with sc2:
-                                st.write("**Recent Talk:**")
+                                st.write("**Recent Chatter:**")
                                 for r in sent_a['data'].head(3).to_dict('records'):
                                     st.markdown(f"• **{r['Source']}**: [{r['Title']}]({r['Link']})")
                         else:
-                            st.info("No sentiment data available for this fund house.")
+                            st.info("No active sentiment data found for this Fund House.")
