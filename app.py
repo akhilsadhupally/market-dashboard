@@ -11,22 +11,56 @@ from collections import Counter
 import re
 import deprecated 
 
-# --- 🎨 CONFIGURATION ---
+# --- 🎨 PRO CONFIGURATION ---
 st.set_page_config(
-    page_title="InvestRight.AI", 
+    page_title="InvestRight.AI | Pro Terminal", 
     page_icon="🦁", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- 🛠️ DATA LOADING ---
+# Custom CSS for "MoneyControl" style polish
+st.markdown("""
+    <style>
+    .stMetric {
+        background-color: #f9f9f9;
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #e0e0e0;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 20px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        border-radius: 4px 4px 0px 0px;
+        font-weight: 600;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 📚 EDUCATIONAL TOOLTIPS (The "Teacher" Layer) ---
+TOOLTIPS = {
+    "PE": "Price-to-Earnings Ratio: Measures if a stock is overvalued. Lower is generally better (cheaper).",
+    "PB": "Price-to-Book: Compares market price to book value. <1 suggest the stock is undervalued.",
+    "DE": "Debt-to-Equity: How much debt the company has vs. shareholder money. >2 is risky.",
+    "ROE": "Return on Equity: How efficiently the company uses your money to generate profit. >15% is good.",
+    "Alpha": "Performance vs Benchmark. Positive Alpha means it beat the market index.",
+    "Beta": "Volatility. >1 means the stock swings more than the market (Risky). <1 is safer.",
+    "GMP": "Grey Market Premium: The price unofficial traders are paying before listing. High GMP = High Demand.",
+    "NAV": "Net Asset Value: The price of one unit of the Mutual Fund.",
+    "Expense": "Expense Ratio: The annual fee the fund charges you. Lower is better."
+}
+
+# --- 🛠️ DATA ENGINE ---
+
 @st.cache_data
-def load_stock_data():
+def load_stock_list():
     try:
         url = "https://raw.githubusercontent.com/akhilsadhupally/market-dashboard/refs/heads/main/stocks.csv"
         df = pd.read_csv(url)
         df.columns = df.columns.str.strip()
-        
         if 'SYMBOL' in df.columns:
             df['Search_Label'] = df['SYMBOL'] + " - " + df['NAME OF COMPANY']
         elif 'Symbol' in df.columns:
@@ -34,24 +68,20 @@ def load_stock_data():
         else:
             return pd.DataFrame()
         return df
-    except Exception as e:
-        data = {'Search_Label': ['TATASTEEL - Tata Steel Ltd', 'RELIANCE - Reliance Industries', 'ZOMATO - Zomato Ltd']}
-        return pd.DataFrame(data)
+    except:
+        return pd.DataFrame({'Search_Label': ['RELIANCE - Reliance Industries', 'TATASTEEL - Tata Steel']})
 
-stock_df = load_stock_data()
+stock_df = load_stock_list()
 
-# --- 🧠 INTELLIGENT SENTIMENT ENGINE (The Core Upgrade) ---
+# --- 🧠 SENTIMENT 3.0 (Weighted & Credible) ---
 @st.cache_data(ttl=600)
 def get_sentiment_report(query_term):
-    """
-    Scrapes news/social media, analyzes sentiment, AND summarizes the conversation.
-    Returns a dictionary with Score, Rating, Summary, and Raw Links.
-    """
+    # Specialized queries for different investor needs
     queries = [
-        f"site:reddit.com {query_term} discussion",
-        f"site:twitter.com {query_term} sentiment",
-        f"{query_term} market news india",
-        f"{query_term} analysis review"
+        f"{query_term} stock news merger acquisition",  # M&A
+        f"{query_term} quarterly results profit",       # Earnings
+        f"site:moneycontrol.com {query_term} analysis", # Credible Source
+        f"site:reddit.com {query_term} discussion"      # Social Pulse
     ]
     
     combined_data = []
@@ -59,128 +89,152 @@ def get_sentiment_report(query_term):
     analyzer = SentimentIntensityAnalyzer()
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    # 1. FETCH DATA
     for q in queries:
         url = f"https://news.google.com/rss/search?q={q}&hl=en-IN&gl=IN&ceid=IN:en"
         try:
             r = requests.get(url, headers=headers, timeout=4)
             soup = BeautifulSoup(r.text, 'xml') 
-            items = soup.find_all('item')[:5] # Fetch top 5 per source
+            items = soup.find_all('item')[:4]
             for item in items:
                 title = item.title.text
                 link = item.link.text
-                pub_date = item.pubDate.text if item.pubDate else ""
                 
-                # Identify Source
-                if "reddit" in q: source = "Reddit"
-                elif "twitter" in q: source = "X (Twitter)"
-                else: source = "News Media"
+                # WEIGHTING LOGIC: News is more "Credible" than Reddit
+                weight = 1.0
+                if "reddit" in q: 
+                    source = "Reddit 💬"
+                    weight = 0.6 # Lower trust
+                elif "moneycontrol" in q or "news" in q:
+                    source = "Financial News 📰"
+                    weight = 1.2 # Higher trust
+                else: 
+                    source = "Web 🌐"
                 
-                # Score
                 score = analyzer.polarity_scores(title)['compound']
-                combined_data.append({'Title': title, 'Source': source, 'Score': score, 'Link': link, 'Date': pub_date})
+                combined_data.append({
+                    'Title': title, 'Source': source, 'Score': score, 'Link': link, 'Weight': weight
+                })
                 all_titles.append(title)
         except:
             continue
             
-    if not combined_data:
-        return None
+    if not combined_data: return None
 
     df = pd.DataFrame(combined_data)
     
-    # 2. CALCULATE AGGREGATE SCORES
-    avg_score = df['Score'].mean() # Range -1 to 1
+    # Weighted Average Score
+    weighted_score = (df['Score'] * df['Weight']).sum() / df['Weight'].sum()
     
-    # Convert to 0-100 Scale for UI
-    # -1 becomes 0, 0 becomes 50, +1 becomes 100
-    sentiment_score = int((avg_score + 1) * 50)
+    # Scale to 0-100
+    final_score = int((weighted_score + 1) * 50)
     
-    # Determine Professional Rating
-    if sentiment_score >= 75: rating = "Strong Buy / Bullish 🚀"
-    elif sentiment_score >= 60: rating = "Positive Accumulate 📈"
-    elif sentiment_score >= 40: rating = "Neutral / Hold ⚖️"
-    elif sentiment_score >= 25: rating = "Weak / Cautious ⚠️"
-    else: rating = "Strong Sell / Bearish 🩸"
+    # Professional Rating System
+    if final_score >= 80: rating = "Strong Buy (Bullish) 🟢"
+    elif final_score >= 60: rating = "Accumulate (Positive) 📈"
+    elif final_score >= 40: rating = "Hold (Neutral) ⚖️"
+    elif final_score >= 20: rating = "Reduce (Cautious) ⚠️"
+    else: rating = "Sell (Bearish) 🔴"
 
-    # 3. GENERATE "TALKING POINTS" SUMMARY
-    # Extract keywords to see what people are talking about
+    # AI Summary
     text_blob = " ".join(all_titles).lower()
-    # Remove common useless words
-    ignore_words = ['stock', 'share', 'price', 'market', 'india', 'news', 'analysis', 'review', 'target', 'today', 'latest', 'for', 'the', 'and', 'with', 'ipo', 'fund', 'mutual']
+    ignore = ['stock', 'share', 'market', 'india', 'price', 'today', 'news', 'ltd', 'limited', 'results', 'quarter']
     words = re.findall(r'\w+', text_blob)
-    filtered_words = [w for w in words if w not in ignore_words and len(w) > 3]
+    keywords = [w for w in words if w not in ignore and len(w) > 3]
+    topics = [word for word, count in Counter(keywords).most_common(5)]
     
-    # Find most common topics (e.g., "profit", "debt", "growth")
-    common_topics = [word for word, count in Counter(filtered_words).most_common(5)]
-    topic_str = ", ".join(common_topics).title()
-    
-    summary_text = f"Market discourse is currently focused on **{topic_str}**. "
-    if avg_score > 0.2:
-        summary_text += "Overall tone is optimistic, driven by positive news coverage and community support."
-    elif avg_score < -0.2:
-        summary_text += "Sentiment is weighed down by negative headlines or caution in community discussions."
-    else:
-        summary_text += "Opinions are mixed, indicating a period of consolidation or uncertainty."
-
     return {
-        "score_val": sentiment_score, # 0-100
+        "score": final_score,
         "rating": rating,
-        "summary": summary_text,
-        "topics": common_topics,
+        "topics": topics,
         "data": df
     }
 
-# --- 🛠️ OTHER ENGINES (IPO & MF) ---
-
-# 1. IPO ENGINE (Google Sheet Bridge)
+# --- 📊 EQUITY DEEP DIVE ENGINE ---
 @st.cache_data(ttl=300)
-def get_ipo_dashboard_data():
+def get_stock_fundamentals(ticker):
     try:
-        # 🟢 YOUR GOOGLE SHEET LINK
+        symbol = ticker.upper() if ticker.endswith(".NS") else f"{ticker.upper()}.NS"
+        stock = yf.Ticker(symbol)
+        
+        # 1. Price Data
+        hist = stock.history(period="1y") # Get 1 year for 52w calc
+        if hist.empty: return None
+        
+        current = hist['Close'].iloc[-1]
+        prev = hist['Close'].iloc[-2]
+        change_pct = ((current - prev) / prev) * 100
+        
+        # 2. Advanced Fundamentals
+        info = stock.info
+        
+        # Shareholding (Proxy via Major Holders)
+        holders = stock.major_holders
+        if holders is not None:
+            # Clean up the dataframe if needed
+            holders.columns = ['Value', 'Holder']
+        
+        # Recommendations (Analyst Ratings)
+        recs = stock.recommendations
+        rec_summary = "N/A"
+        if recs is not None and not recs.empty:
+            # Get latest period mean
+            rec_summary = recs.tail(5).to_dict() # simplified for display
+            
+        metrics = {
+            "Market Cap": info.get("marketCap"),
+            "Beta": info.get("beta", 0),
+            "PE": info.get("trailingPE", 0),
+            "EPS": info.get("trailingEps", 0),
+            "Div Yield": info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0,
+            "52W High": info.get("fiftyTwoWeekHigh"),
+            "52W Low": info.get("fiftyTwoWeekLow"),
+            "DebtToEquity": info.get("debtToEquity", 0),
+            "ROE": info.get("returnOnEquity", 0),
+            "Sector": info.get("sector", "N/A"),
+            "Summary": info.get("longBusinessSummary", "No summary.")
+        }
+        
+        return {"price": current, "change": change_pct, "hist": hist, "metrics": metrics, "holders": holders}
+    except Exception as e:
+        return None
+
+# --- 🚀 IPO ENGINE (Stable Bridge) ---
+@st.cache_data(ttl=300)
+def get_ipo_data():
+    try:
+        # 🟢 YOUR SHEET LINK
         sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSrY-WLkphYTFIp9FffqR_WfXE_Ta9E0SId-pKqF10ZaUXTZEW1rHY96ilINOkrA6IDaASwWiQl9TMI/pub?output=csv"
         df = pd.read_csv(sheet_url)
         df.columns = [c.lower() for c in df.columns]
         
         new_df = pd.DataFrame()
-        col_name = next((c for c in df.columns if 'ipo' in c or 'company' in c), None)
-        col_price = next((c for c in df.columns if 'price' in c), None)
-        col_gmp = next((c for c in df.columns if 'gmp' in c or 'premium' in c), None)
+        # Intelligent Column Matching
+        c_name = next((c for c in df.columns if 'ipo' in c or 'company' in c), None)
+        c_price = next((c for c in df.columns if 'price' in c), None)
+        c_gmp = next((c for c in df.columns if 'gmp' in c or 'premium' in c), None)
         
-        if not col_name: return pd.DataFrame()
+        if not c_name: return pd.DataFrame()
         
-        new_df['IPO Name'] = df[col_name]
-        new_df['Price'] = df[col_price] if col_price else "0"
-        new_df['GMP'] = df[col_gmp] if col_gmp else 0
-
-        def clean_val(val):
-            try:
-                return float(str(val).split('(')[0].replace('₹', '').replace(',', '').replace('%', '').strip())
-            except:
-                return 0.0
+        new_df['Company'] = df[c_name]
+        new_df['Price'] = df[c_price].fillna(0)
+        new_df['GMP'] = df[c_gmp].fillna(0)
         
-        new_df['GMP_Value'] = new_df['GMP'].apply(clean_val)
-        new_df['Price_Value'] = new_df['Price'].apply(clean_val)
-        
-        def calc_perc(row):
-            if row['Price_Value'] > 0:
-                return (row['GMP_Value'] / row['Price_Value']) * 100
-            return 0.0
+        # Clean & Calc
+        def clean(x): 
+            try: return float(str(x).split('(')[0].replace('₹','').replace(',','').replace('%','').strip())
+            except: return 0.0
             
-        new_df['GMP %'] = new_df.apply(calc_perc, axis=1)
-        new_df = new_df.sort_values(by='GMP_Value', ascending=False)
-        return new_df
-
-    except Exception as e:
+        new_df['GMP_Val'] = new_df['GMP'].apply(clean)
+        new_df['Price_Val'] = new_df['Price'].apply(clean)
+        new_df['Gain%'] = ((new_df['GMP_Val'] / new_df['Price_Val']) * 100).fillna(0)
+        
+        return new_df.sort_values('GMP_Val', ascending=False)
+    except:
         return pd.DataFrame()
 
-# 2. MUTUAL FUND ENGINE
-@st.cache_data(ttl=86400)
-def get_all_schemes():
-    obj = Mftool()
-    return obj.get_scheme_codes()
-
+# --- 💰 MF ENGINE (With Returns Calc) ---
 @st.cache_data(ttl=3600)
-def get_mf_data(code):
+def get_mf_deep_dive(code):
     obj = Mftool()
     try:
         data = obj.get_scheme_historical_nav(code)
@@ -188,246 +242,194 @@ def get_mf_data(code):
         df['nav'] = df['nav'].astype(float)
         df['date'] = pd.to_datetime(df['date'], format='%d-%m-%Y')
         df = df.sort_values('date')
+        
         details = obj.get_scheme_details(code)
-        return df, details
-    except:
-        return None, None
+        
+        # Calculate Returns (CAGR approx)
+        curr_nav = df['nav'].iloc[-1]
+        
+        def get_ret(days):
+            if len(df) > days:
+                past = df['nav'].iloc[-days]
+                return ((curr_nav - past) / past) * 100
+            return 0.0
 
-# 3. EQUITY ENGINE
-@st.cache_data(ttl=300)
-def get_stock_data(ticker):
-    try:
-        symbol = ticker.upper() if ticker.endswith(".NS") else f"{ticker.upper()}.NS"
-        stock = yf.Ticker(symbol)
-        history = stock.history(period="3mo")
-        if history.empty: return None, None, None, None, "No Data"
-        
-        current = history['Close'].iloc[-1]
-        prev = history['Close'].iloc[-2] if len(history) > 1 else current
-        change = ((current - prev) / prev) * 100
-        
-        i = stock.info
-        fundamentals = {
-            "Market Cap": i.get("marketCap", "N/A"),
-            "Sector": i.get("sector", "N/A"),
-            "P/E Ratio": i.get("trailingPE", "N/A"),
-            "Dividend Yield": i.get("dividendYield", 0) * 100 if i.get("dividendYield") else 0,
-            "52W High": i.get("fiftyTwoWeekHigh", 0),
-            "52W Low": i.get("fiftyTwoWeekLow", 0),
-            "Business Summary": i.get("longBusinessSummary", "No summary available.")
+        returns = {
+            "1Y": get_ret(365),
+            "3Y": get_ret(365*3),
+            "5Y": get_ret(365*5),
+            "All": ((curr_nav - df['nav'].iloc[0]) / df['nav'].iloc[0]) * 100
         }
         
-        return current, change, history, fundamentals, "Success"
-    except Exception as e:
-        return None, None, None, None, str(e)
+        return df, details, returns
+    except:
+        return None, None, None
 
-# --- 📱 APP UI START ---
+# --- 📱 APP UI ---
 st.sidebar.title("🦁 InvestRight.AI")
-page = st.sidebar.radio("Go to", ["📈 Equity Research", "🚀 IPO & GMP", "💰 Mutual Funds"])
+st.sidebar.caption("Professional Intelligence Terminal")
+page = st.sidebar.radio("Navigate", ["📈 Equity Research", "🚀 IPO Intelligence", "💰 Mutual Funds"])
 
-# --- PAGE 1: EQUITY RESEARCH ---
+# --- PAGE 1: EQUITY ---
 if page == "📈 Equity Research":
-    st.title("Equity Intelligence")
+    st.title("Equity Research Terminal")
+    st.info("Deep dive into Fundamentals, Institutional Holdings, and Sentiment.")
     
-    search_label = st.selectbox(
-        "Search Stock", 
-        options=stock_df['Search_Label'].unique() if not stock_df.empty else [],
-        index=None, 
-        placeholder="Type to search (e.g., Tata Motors)..."
-    )
-
-    if search_label:
-        ticker = search_label.split(" - ")[0] 
-        if st.button("Analyze Stock"):
-            with st.spinner("Compiling Intelligence Report..."):
-                price, chg, hist, fund, stat = get_stock_data(ticker)
-                # Fetch INTELLIGENT SENTIMENT
+    search = st.selectbox("Search Company", stock_df['Search_Label'].unique(), index=None, placeholder="Type Tata, Reliance, etc...")
+    
+    if search:
+        ticker = search.split(" - ")[0]
+        if st.button("Generate Report", type="primary"):
+            with st.spinner(f"Analyzing {ticker}..."):
+                data = get_stock_fundamentals(ticker)
                 sentiment = get_sentiment_report(f"{ticker} stock")
             
-            if stat == "Success":
-                # Header
-                st.metric(f"{search_label}", f"₹{price:,.2f}", f"{chg:+.2f}%")
+            if data:
+                m = data['metrics']
                 
-                # TABS UI
-                tab1, tab2, tab3 = st.tabs(["📊 Fundamentals", "📈 Technicals", "🧠 Sentiment Intelligence"])
+                # 1. HEADER (Price & Main Tags)
+                c1, c2, c3 = st.columns([2,1,1])
+                c1.metric(f"{search}", f"₹{data['price']:,.2f}", f"{data['change']:+.2f}%")
+                c2.metric("Sector", m['Sector'])
                 
-                with tab1:
-                    c1, c2, c3, c4 = st.columns(4)
-                    mcap = fund['Market Cap']
-                    mcap_str = f"₹{mcap/10000000:.0f} Cr" if isinstance(mcap, (int, float)) and mcap > 10000000 else f"{mcap}"
-                    c1.metric("Market Cap", mcap_str)
-                    c2.metric("P/E Ratio", f"{fund['P/E Ratio']}")
-                    c3.metric("52W High", f"₹{fund['52W High']}")
-                    c4.metric("Div Yield", f"{fund['Dividend Yield']:.2f}%")
-                    st.caption(f"Sector: {fund['Sector']}")
-                    with st.expander("Business Summary"):
-                        st.write(fund['Business Summary'])
-
-                with tab2:
-                    fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'])])
-                    fig.update_layout(height=400, margin=dict(l=0,r=0,t=0,b=0))
-                    st.plotly_chart(fig, use_container_width=True)
-
-                with tab3:
-                    if sentiment:
-                        # 1. SCORECARD
-                        st.subheader(f"Rating: {sentiment['rating']}")
-                        st.progress(sentiment['score_val'] / 100)
-                        st.caption(f"Confidence Score: {sentiment['score_val']}/100")
-                        
-                        st.markdown("---")
-                        
-                        # 2. AI SUMMARY
-                        st.info(f"**💡 AI Summary:** {sentiment['summary']}")
-                        
-                        # 3. DETAILS
-                        c_buzz, c_feed = st.columns([1, 2])
-                        with c_buzz:
-                            st.write("**Top Talking Points:**")
-                            for topic in sentiment['topics']:
-                                st.code(topic)
-
-                        with c_feed:
-                            st.write("**Source Feeds:**")
-                            for i, row in sentiment['data'].head(5).iterrows():
-                                icon = "🔴" if row['Source'] == "Reddit" else "⚫" if row['Source'] == "X (Twitter)" else "📰"
-                                st.markdown(f"{icon} [{row['Title']}]({row['Link']})")
+                # 2. TABS (The "Clean" UI)
+                tab_fund, tab_news, tab_sent = st.tabs(["📊 Fundamentals & Holdings", "📰 News & Events", "🧠 Smart Sentiment"])
+                
+                with tab_fund:
+                    st.subheader("Key Ratios (Hover for info)")
+                    fc1, fc2, fc3, fc4 = st.columns(4)
+                    fc1.metric("P/E Ratio", f"{m['PE']:.2f}", help=TOOLTIPS['PE'])
+                    fc2.metric("Debt/Equity", f"{m['DebtToEquity']:.2f}", help=TOOLTIPS['DE'])
+                    fc3.metric("ROE %", f"{m['ROE']*100:.2f}%", help=TOOLTIPS['ROE'])
+                    fc4.metric("Div Yield", f"{m['Div Yield']:.2f}%", help=TOOLTIPS['Alpha'])
+                    
+                    st.markdown("---")
+                    st.subheader("🏢 Shareholding Pattern (Major Holders)")
+                    if data['holders'] is not None:
+                        st.table(data['holders'])
                     else:
-                        st.warning("Not enough data to generate a reliable sentiment rating.")
+                        st.write("Shareholding data not available via API.")
+                        
+                with tab_news:
+                    st.subheader("Recent Corporate Actions & News")
+                    if sentiment and sentiment['data'] is not None:
+                        # Filter for "News" sources only
+                        news_only = sentiment['data'][sentiment['data']['Source'].str.contains("News")]
+                        if not news_only.empty:
+                            for i, row in news_only.iterrows():
+                                st.info(f"📰 **{row['Title']}**\n\n[Read Article]({row['Link']})")
+                        else:
+                            st.write("No major news headlines found recently.")
+                            
+                with tab_sent:
+                    if sentiment:
+                        sc1, sc2 = st.columns([1,2])
+                        with sc1:
+                            st.metric("Sentiment Score", f"{sentiment['score']}/100", help="0=Bearish, 100=Bullish. Weighted by source credibility.")
+                            st.progress(sentiment['score']/100)
+                            st.caption(f"**Rating:** {sentiment['rating']}")
+                        with sc2:
+                            st.write("**Market Whispers (Topics):**")
+                            st.write(", ".join(sentiment['topics']))
+                            st.write("**Community Verdict:**")
+                            st.write("Sentiment is derived from financial news outlets and retail discussion forums.")
 
 # --- PAGE 2: IPO ---
-elif page == "🚀 IPO & GMP":
-    st.title("🚀 IPO Intelligence")
+elif page == "🚀 IPO Intelligence":
+    st.title("🚀 IPO Intelligence Center")
+    st.info("Analyze Fundamentals (Peer Compare), GMP, and Social Mood.")
     
-    with st.spinner("Fetching Live GMP Data..."):
-        ipo_df = get_ipo_dashboard_data()
-
+    ipo_df = get_ipo_data()
+    
     if not ipo_df.empty:
-        tab_main, tab_dive = st.tabs(["🔥 Active Dashboard", "🔍 Deep Dive & Sentiment"])
+        t_dash, t_dive = st.tabs(["🔥 GMP Dashboard", "🔍 Deep Dive Analysis"])
         
-        with tab_main:
+        with t_dash:
             st.dataframe(
-                ipo_df[['IPO Name', 'Price', 'GMP', 'GMP %']],
+                ipo_df[['Company', 'Price', 'GMP', 'Gain%']],
                 column_config={
-                    "GMP %": st.column_config.ProgressColumn("Gain %", format="%.1f%%", min_value=-10, max_value=100),
-                    "GMP": st.column_config.NumberColumn("GMP (₹)")
-                },
-                hide_index=True,
-                use_container_width=True
+                    "Gain%": st.column_config.ProgressColumn("Listing Gain", format="%.1f%%", min_value=-10, max_value=100),
+                    "GMP": st.column_config.NumberColumn("GMP (₹)", help=TOOLTIPS['GMP'])
+                }, hide_index=True, use_container_width=True
             )
-        
-        with tab_dive:
-            selected_ipo = st.selectbox("Select IPO:", options=ipo_df['IPO Name'].unique(), index=None, placeholder="Pick an IPO to analyze...")
             
-            if selected_ipo:
-                # Fetch Sentiment for IPO
-                with st.spinner(f"Analyzing Market Mood for {selected_ipo}..."):
-                    row = ipo_df[ipo_df['IPO Name'] == selected_ipo].iloc[0]
-                    sentiment = get_sentiment_report(f"{selected_ipo} IPO")
+        with t_dive:
+            sel_ipo = st.selectbox("Select IPO", ipo_df['Company'].unique())
+            if sel_ipo:
+                row = ipo_df[ipo_df['Company'] == sel_ipo].iloc[0]
                 
-                # METRICS
-                c1, c2, c3 = st.columns(3)
-                c1.metric("GMP Value", f"₹{row['GMP_Value']}")
-                c2.metric("Est. Listing", f"₹{row['Price_Value'] + row['GMP_Value']}")
-                c3.metric("Gain %", f"{row['GMP %']:.1f}%")
+                # 1. GMP CARD
+                st.subheader("Grey Market Status")
+                gc1, gc2 = st.columns(2)
+                gc1.metric("Expected Listing Price", f"₹{row['Price_Val'] + row['GMP_Val']}")
+                gc2.metric("Listing Gain", f"{row['Gain%']:.1f}%", help="Estimated profit based on current GMP.")
                 
                 st.markdown("---")
+                # 2. SENTIMENT
+                st.subheader("🧠 Credible Sentiment Rating")
+                with st.spinner("Analyzing Social Mood..."):
+                    sent = get_sentiment_report(f"{sel_ipo} IPO")
                 
-                # SENTIMENT REPORT
-                st.subheader("🧠 Public Sentiment & Rating")
-                
-                if sentiment:
-                    col_score, col_text = st.columns([1, 2])
-                    
-                    with col_score:
-                        st.metric("Sentiment Score", f"{sentiment['score_val']}/100")
-                        st.caption(sentiment['rating'])
-                        st.progress(sentiment['score_val'] / 100)
-                    
-                    with col_text:
-                        st.success(f"**Analysis:** {sentiment['summary']}")
-                        st.write("Recent Discussions:")
-                        for i, r in sentiment['data'].head(3).iterrows():
-                            st.markdown(f"- [{r['Title']}]({r['Link']})")
-                else:
-                    st.info("No sufficient public discussion data found for this IPO yet.")
+                if sent:
+                    c1, c2 = st.columns([1, 2])
+                    with c1:
+                        st.metric("Hype Score", f"{sent['score']}/100")
+                        st.progress(sent['score']/100)
+                    with c2:
+                        st.write(f"**Verdict:** {sent['rating']}")
+                        st.caption("Based on Reddit discussions and Financial News coverage.")
+                        
+                st.markdown("---")
+                # 3. PEER COMPARE (Proxy for Fundamentals)
+                st.subheader("🏢 Fundamentals Check (Peer Comparison)")
+                peer = st.text_input("Compare with Listed Competitor (e.g. ZOMATO)", placeholder="Symbol...")
+                if peer:
+                    pdata = get_stock_fundamentals(peer)
+                    if pdata:
+                        st.success(f"**{peer.upper()}** (Sector Proxy)")
+                        st.write(f"Competitor P/E Ratio: **{pdata['metrics']['PE']:.2f}**")
+                        st.caption("If the IPO price implies a higher P/E than this competitor, it might be overpriced.")
 
 # --- PAGE 3: MUTUAL FUNDS ---
 elif page == "💰 Mutual Funds":
-    st.title("Mutual Fund Comparator ⚔️")
+    st.title("Mutual Fund Analyzer")
+    st.info("Track long-term returns and recent news updates.")
     
-    all_schemes = get_all_schemes()
-    scheme_names = list(all_schemes.values())
+    obj = Mftool()
+    schemes = obj.get_scheme_codes()
+    s_name = st.selectbox("Select Fund", list(schemes.values()), index=None, placeholder="Search Axis, HDFC, SBI...")
     
-    st.info("Select a fund to see its Smart Sentiment Rating.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        fund_a_name = st.selectbox("Select Fund A", options=scheme_names, index=None, placeholder="Search Fund A...", key="f1")
-    with col2:
-        fund_b_name = st.selectbox("Select Fund B (Optional)", options=scheme_names, index=None, placeholder="Search Fund B...", key="f2")
-    
-    # LOGIC
-    if fund_a_name:
-        # Determine mode
-        mode = "Compare" if fund_b_name else "Analyze"
-        btn_label = "Compare Funds 🚀" if mode == "Compare" else "Analyze Fund A"
-        
-        if st.button(btn_label, type="primary"):
-            with st.spinner("Analyzing Performance & Sentiment..."):
-                code_a = list(all_schemes.keys())[list(all_schemes.values()).index(fund_a_name)]
-                hist_a, det_a = get_mf_data(code_a)
-                
-                # Fetch Sentiment for Fund A
-                fh_a = det_a.get('fund_house', '')
-                sent_a = get_sentiment_report(f"{fh_a} Mutual Fund")
-
-                if mode == "Compare":
-                    code_b = list(all_schemes.keys())[list(all_schemes.values()).index(fund_b_name)]
-                    hist_b, det_b = get_mf_data(code_b)
+    if s_name:
+        if st.button("Analyze Fund"):
+            code = list(schemes.keys())[list(schemes.values()).index(s_name)]
+            with st.spinner("Fetching NAV History & Returns..."):
+                df, det, ret = get_mf_deep_dive(code)
+                sent = get_sentiment_report(f"{det['fund_house']} Mutual Fund")
             
-            if hist_a is not None:
-                # TABS
-                tabs = st.tabs(["📊 Overview", "🧠 Smart Sentiment", "📈 Performance"])
+            if df is not None:
+                # 1. RETURNS CARD
+                st.subheader("📈 Performance Report")
+                rc1, rc2, rc3, rc4 = st.columns(4)
+                rc1.metric("1 Year Return", f"{ret['1Y']:.2f}%", help="CAGR for last 1 year")
+                rc2.metric("3 Year Return", f"{ret['3Y']:.2f}%", help="CAGR for last 3 years")
+                rc3.metric("5 Year Return", f"{ret['5Y']:.2f}%", help="CAGR for last 5 years")
+                rc4.metric("Since Inception", f"{ret['All']:.2f}%")
                 
-                with tabs[0]:
-                    # Overview Table
-                    if mode == "Compare" and hist_b is not None:
-                        comp_data = {
-                            "Metric": ["NAV", "Risk", "Fund House"],
-                            f"Fund A": [f"₹{hist_a['nav'].iloc[-1]}", det_a.get('scheme_risk', 'N/A'), det_a.get('fund_house', 'N/A')],
-                            f"Fund B": [f"₹{hist_b['nav'].iloc[-1]}", det_b.get('scheme_risk', 'N/A'), det_b.get('fund_house', 'N/A')]
-                        }
-                        st.dataframe(pd.DataFrame(comp_data), hide_index=True, use_container_width=True)
-                    else:
-                        st.metric("NAV", f"₹{hist_a['nav'].iloc[-1]}")
-                        st.write(f"**Fund House:** {det_a.get('fund_house')}")
-                        st.write(f"**Category:** {det_a.get('scheme_category')}")
+                # 2. CHART
+                fig = px.line(df.tail(365*3), x='date', y='nav', title="3-Year NAV Trend")
+                st.plotly_chart(fig, use_container_width=True)
                 
-                with tabs[1]:
-                    # SENTIMENT TAB (The New Feature)
-                    st.subheader(f"Sentiment for: {det_a.get('fund_house')}")
-                    
-                    if sent_a:
-                        c1, c2 = st.columns([1, 2])
-                        with c1:
-                            st.metric("Trust Score", f"{sent_a['score_val']}/100")
-                            st.progress(sent_a['score_val'] / 100)
-                            st.caption(sent_a['rating'])
-                        with c2:
-                            st.info(f"**Community Verdict:** {sent_a['summary']}")
-                            st.write("**Key Topics:** " + ", ".join(sent_a['topics']))
-                    else:
-                        st.warning("No sentiment data available.")
-
-                with tabs[2]:
-                    # Chart Logic
-                    if mode == "Compare" and hist_b is not None:
-                        df_a = hist_a.tail(365)[['date', 'nav']].rename(columns={'nav': 'Fund A'})
-                        df_b = hist_b.tail(365)[['date', 'nav']].rename(columns={'nav': 'Fund B'})
-                        merged = pd.merge(df_a, df_b, on='date', how='inner')
-                        fig = px.line(merged, x='date', y=['Fund A', 'Fund B'], title="Comparative Returns")
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        fig = px.line(hist_a.tail(365), x='date', y='nav', title="1-Year Trend")
-                        st.plotly_chart(fig, use_container_width=True)
+                # 3. NEWS & SENTIMENT
+                st.markdown("---")
+                st.subheader(f"📰 News & Sentiment: {det['fund_house']}")
+                
+                sc1, sc2 = st.columns([1,2])
+                with sc1:
+                    if sent:
+                        st.metric("Trust Score", f"{sent['score']}/100")
+                        st.caption(sent['rating'])
+                with sc2:
+                    if sent:
+                        st.write("**Recent Headlines:**")
+                        for i, r in sent['data'].head(3).iterrows():
+                            st.markdown(f"• [{r['Title']}]({r['Link']})")
