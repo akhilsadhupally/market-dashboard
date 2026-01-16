@@ -134,13 +134,15 @@ def get_sentiment_report(query_term):
     return {"score": final_score, "rating": rating, "data": df, "count": len(df)}
 
 # --- 📊 EQUITY ENGINE (Fast_Info Fix) ---
+    # --- 📊 EQUITY ENGINE (Fixed with Manual Overrides) ---
 @st.cache_data(ttl=300)
 def get_stock_fundamentals(ticker):
     try:
+        # Standardize Ticker
         symbol = ticker.upper() if ticker.endswith(".NS") else f"{ticker.upper()}.NS"
         stock = yf.Ticker(symbol)
         
-        # 1. Price Data
+        # 1. Price Data (Standard Fetch)
         hist = stock.history(period="1y")
         if hist.empty: return None
         
@@ -148,40 +150,55 @@ def get_stock_fundamentals(ticker):
         prev = hist['Close'].iloc[-2]
         change_pct = ((current - prev) / prev) * 100
         
-        # 2. Robust Fundamentals (Using fast_info)
-        # fast_info is less likely to be blocked than info
+        # 2. Fetch API Data
         fi = stock.fast_info
-        metrics = {}
-        
+        info = {}
         try:
-            # Try getting detailed info first
             info = stock.info
-            metrics = {
-                "Market Cap": info.get("marketCap", fi.market_cap),
-                "PE": info.get("trailingPE", "N/A"),
-                "Div Yield": info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0,
-                "52W High": info.get("fiftyTwoWeekHigh", fi.year_high),
-                "DebtToEquity": info.get("debtToEquity", "N/A"),
-                "ROE": info.get("returnOnEquity", 0),
-                "Sector": info.get("sector", "N/A"),
-                "Summary": info.get("longBusinessSummary", "Summary temporarily unavailable from source.")
-            }
         except:
-            # Fallback to fast_info if info fails
-            metrics = {
-                "Market Cap": fi.market_cap,
-                "PE": "N/A", # fast_info doesn't have PE
-                "Div Yield": 0,
-                "52W High": fi.year_high,
-                "DebtToEquity": "N/A",
-                "ROE": 0,
-                "Sector": "N/A",
-                "Summary": "Fundamental data restricted by data provider."
+            pass
+
+        # 3. 🛡️ MANUAL OVERRIDE BLOCK 
+        # Add tickers here that show "N/A" in the dashboard
+        overrides = {
+            "TMCV.NS": {
+                "Sector": "Commercial Vehicles",
+                "PE": "N/A (Loss Making)", 
+                "DebtToEquity": 0.57,
+                "ROE": -0.098,
+                "Summary": "Tata Motors Limited (CV) is India's largest manufacturer of commercial vehicles. Demerged from the passenger business in Oct 2025."
+            },
+            "TATASTEEL.NS": {
+                "Sector": "Basic Materials (Iron & Steel)",
+                "PE": 34.7,
+                "DebtToEquity": 1.01, 
+                "ROE": 0.072, # 7.2%
+                "Div Yield": 1.90,
+                "Summary": "Tata Steel is one of the world's most geographically diversified steel producers with operations in 26 countries."
             }
-            
+        }
+
+        # 4. Construct Metrics (Merge API data with Overrides)
+        # We check the 'overrides' list first. If not found, we ask Yahoo Finance.
+        specific_override = overrides.get(symbol, {})
+
+        metrics = {
+            "Market Cap": specific_override.get("Market Cap", info.get("marketCap", fi.market_cap)),
+            "PE": specific_override.get("PE", info.get("trailingPE", "N/A")),
+            "Div Yield": specific_override.get("Div Yield", info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0),
+            "52W High": info.get("fiftyTwoWeekHigh", fi.year_high),
+            "DebtToEquity": specific_override.get("DebtToEquity", info.get("debtToEquity", "N/A")),
+            "ROE": specific_override.get("ROE", info.get("returnOnEquity", 0)),
+            "Sector": specific_override.get("Sector", info.get("sector", "N/A")),
+            "Summary": specific_override.get("Summary", info.get("longBusinessSummary", "Summary unavailable from source."))
+        }
+        
         return {"price": current, "change": change_pct, "hist": hist, "metrics": metrics}
+
     except Exception as e:
+        print(f"Error fetching {ticker}: {e}")
         return None
+
 
 # --- 🚀 IPO ENGINE ---
 @st.cache_data(ttl=300)
@@ -440,3 +457,4 @@ elif page == "💰 Mutual Funds":
                                     st.markdown(f"• **{r['Source']}**: [{r['Title']}]({r['Link']})")
                         else:
                             st.info("No active sentiment data found for this Fund House.")
+
