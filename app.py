@@ -1,7 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
@@ -70,7 +68,6 @@ def load_stock_list():
 stock_df = load_stock_list()
 
 # --- 🧠 SENTIMENT ENGINE (DuckDuckGo Fix) ---
-# We switched to DuckDuckGo because Google RSS was blocking the cloud server.
 @st.cache_data(ttl=600)
 def get_sentiment_report(query_term):
     # Search for news and discussions
@@ -133,8 +130,7 @@ def get_sentiment_report(query_term):
     
     return {"score": final_score, "rating": rating, "data": df, "count": len(df)}
 
-# --- 📊 EQUITY ENGINE (Fast_Info Fix) ---
-    # --- 📊 EQUITY ENGINE (Fixed with Manual Overrides) ---
+# --- 📊 EQUITY ENGINE (Fixed with Manual Overrides) ---
 @st.cache_data(ttl=300)
 def get_stock_fundamentals(ticker):
     try:
@@ -172,14 +168,29 @@ def get_stock_fundamentals(ticker):
                 "Sector": "Basic Materials (Iron & Steel)",
                 "PE": 34.7,
                 "DebtToEquity": 1.01, 
-                "ROE": 0.072, # 7.2%
+                "ROE": 0.072, # ~7.2%
                 "Div Yield": 1.90,
                 "Summary": "Tata Steel is one of the world's most geographically diversified steel producers with operations in 26 countries."
+            },
+            "RELIANCE.NS": {
+                "Sector": "Energy / Diversified Conglomerate",
+                "PE": 23.8,
+                "DebtToEquity": 0.42,
+                "ROE": 0.094, 
+                "Div Yield": 0.38,
+                "Summary": "India's largest private sector corporation with dominance in O2C (Oil-to-Chemicals), Telecom (Jio), and Retail. Recently focused on New Energy and AI expansion."
+            },
+            "SUZLON.NS": {
+                "Sector": "Renewable Energy (Wind)",
+                "PE": 65.4, # High due to growth pricing
+                "DebtToEquity": 0.05, 
+                "ROE": 0.185, 
+                "Div Yield": 0.00,
+                "Summary": "One of the world's leading renewable energy solutions providers. The company has recently turned profitable after a major debt restructuring."
             }
         }
 
         # 4. Construct Metrics (Merge API data with Overrides)
-        # We check the 'overrides' list first. If not found, we ask Yahoo Finance.
         specific_override = overrides.get(symbol, {})
 
         metrics = {
@@ -198,7 +209,6 @@ def get_stock_fundamentals(ticker):
     except Exception as e:
         print(f"Error fetching {ticker}: {e}")
         return None
-
 
 # --- 🚀 IPO ENGINE ---
 @st.cache_data(ttl=300)
@@ -282,27 +292,10 @@ if page == "📈 Equity Research":
                 c1.metric(f"{search}", f"₹{data['price']:,.2f}", f"{data['change']:+.2f}%")
                 c2.metric("Sector", m.get('Sector', 'N/A'))
                 
-                # TABS
-                tab_fund, tab_sent = st.tabs(["📊 Fundamentals", "🧠 Social Sentiment & Buzz"])
+                # TABS (Swapped: Sentiment First)
+                tab_sent, tab_fund = st.tabs(["🧠 Social Sentiment & Buzz", "📊 Fundamentals"])
                 
-                with tab_fund:
-                    # Robust display: Check if data is 'N/A' before formatting
-                    fc1, fc2, fc3, fc4 = st.columns(4)
-                    
-                    # Safe formatting helpers
-                    def safe_fmt(val, is_pct=False):
-                        if isinstance(val, (int, float)):
-                            return f"{val:.2f}%" if is_pct else f"{val:.2f}"
-                        return "N/A"
-
-                    fc1.metric("P/E Ratio", safe_fmt(m.get('PE')), help=TOOLTIPS['PE'])
-                    fc2.metric("Debt/Equity", safe_fmt(m.get('DebtToEquity')), help=TOOLTIPS['DE'])
-                    fc3.metric("ROE %", safe_fmt(m.get('ROE')*100 if isinstance(m.get('ROE'), (int,float)) else "N/A", True), help=TOOLTIPS['ROE'])
-                    fc4.metric("Div Yield", safe_fmt(m.get('Div Yield'), True))
-                    
-                    st.line_chart(data['hist']['Close'])
-                    st.info(f"**Business Summary:** {m.get('Summary', 'N/A')}")
-
+                # 1. SENTIMENT TAB (First)
                 with tab_sent:
                     if sentiment:
                         sc1, sc2 = st.columns([1,2])
@@ -316,6 +309,25 @@ if page == "📈 Equity Research":
                                 st.markdown(f"• **{r['Source']}**: [{r['Title']}]({r['Link']})")
                     else:
                         st.warning("No social buzz detected for this stock right now.")
+
+                # 2. FUNDAMENTALS TAB (Second)
+                with tab_fund:
+                    # Robust display: Check if data is 'N/A' before formatting
+                    fc1, fc2, fc3, fc4 = st.columns(4)
+                    
+                    # Safe formatting helpers
+                    def safe_fmt(val, is_pct=False):
+                        if isinstance(val, (int, float)):
+                            return f"{val:.2f}%" if is_pct else f"{val:.2f}"
+                        return str(val)
+
+                    fc1.metric("P/E Ratio", safe_fmt(m.get('PE')), help=TOOLTIPS['PE'])
+                    fc2.metric("Debt/Equity", safe_fmt(m.get('DebtToEquity')), help=TOOLTIPS['DE'])
+                    fc3.metric("ROE %", safe_fmt(m.get('ROE')*100 if isinstance(m.get('ROE'), (int,float)) else "N/A", True), help=TOOLTIPS['ROE'])
+                    fc4.metric("Div Yield", safe_fmt(m.get('Div Yield'), True))
+                    
+                    st.line_chart(data['hist']['Close'])
+                    st.info(f"**Business Summary:** {m.get('Summary', 'N/A')}")
             else:
                 st.error("Data Unavailable: The stock symbol might be delisted or the API is currently blocked.")
 
@@ -457,4 +469,3 @@ elif page == "💰 Mutual Funds":
                                     st.markdown(f"• **{r['Source']}**: [{r['Title']}]({r['Link']})")
                         else:
                             st.info("No active sentiment data found for this Fund House.")
-
