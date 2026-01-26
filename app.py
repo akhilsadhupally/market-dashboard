@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from mftool import Mftool
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import time
-import random
+import datetime
 
 # --- 🎨 PRO CONFIGURATION ---
 st.set_page_config(
@@ -36,6 +36,10 @@ st.markdown("""
         font-weight: 600;
         font-size: 16px;
     }
+    div.stInfo {
+        background-color: #e8f4f8;
+        border: 1px solid #b3d7e6;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -63,16 +67,17 @@ def load_stock_list():
             return pd.DataFrame()
         return df
     except:
-        return pd.DataFrame({'Search_Label': ['RELIANCE - Reliance Industries', 'TATASTEEL - Tata Steel']})
+        return pd.DataFrame({'Search_Label': ['RELIANCE - Reliance Industries', 'TATASTEEL - Tata Steel', 'SUZLON - Suzlon Energy', 'TMCV - Tata Motors CV', 'ZOMATO - Zomato Ltd']})
 
 stock_df = load_stock_list()
 
-# --- 🧠 SENTIMENT ENGINE (DuckDuckGo Fix) ---
+# --- 🧠 SENTIMENT & NEWS ENGINE (Fixed) ---
 @st.cache_data(ttl=600)
 def get_sentiment_report(query_term):
-    # Search for news and discussions
-    url = f"https://html.duckduckgo.com/html/?q={query_term} stock news sentiment"
+    # 1. Clean the query for better hits
+    clean_query = query_term.replace("Direct Plan", "").replace("Growth", "").replace("Option", "").strip()
     
+    url = f"https://html.duckduckgo.com/html/?q={clean_query} news analysis"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
@@ -83,10 +88,15 @@ def get_sentiment_report(query_term):
     try:
         r = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(r.text, 'html.parser')
-        
-        # Parse DuckDuckGo Results
         results = soup.find_all('div', class_='result__body')[:6]
         
+        if not results:
+            # RETRY with simpler query if first failed
+            url_fallback = f"https://html.duckduckgo.com/html/?q={clean_query}"
+            r = requests.get(url_fallback, headers=headers, timeout=10)
+            soup = BeautifulSoup(r.text, 'html.parser')
+            results = soup.find_all('div', class_='result__body')[:5]
+
         for res in results:
             title_tag = res.find('a', class_='result__a')
             if title_tag:
@@ -105,7 +115,6 @@ def get_sentiment_report(query_term):
                     source = "Web News 🌐"
                     weight = 1.0
                 
-                # Analyze Sentiment
                 score = analyzer.polarity_scores(title + " " + snippet)['compound']
                 combined_data.append({'Title': title, 'Source': source, 'Score': score, 'Link': link, 'Weight': weight})
                 
@@ -116,12 +125,9 @@ def get_sentiment_report(query_term):
     if not combined_data: return None
 
     df = pd.DataFrame(combined_data)
-    
-    # Calculate Weighted Score
     weighted_score = (df['Score'] * df['Weight']).sum() / df['Weight'].sum()
-    final_score = int((weighted_score + 1) * 50) # Scale -1..1 to 0..100
+    final_score = int((weighted_score + 1) * 50) 
     
-    # Professional Rating
     if final_score >= 80: rating = "Strong Buy (Bullish) 🟢"
     elif final_score >= 60: rating = "Accumulate (Positive) 📈"
     elif final_score >= 40: rating = "Hold (Neutral) ⚖️"
@@ -130,74 +136,93 @@ def get_sentiment_report(query_term):
     
     return {"score": final_score, "rating": rating, "data": df, "count": len(df)}
 
-# --- 📊 EQUITY ENGINE (Fixed with Manual Overrides) ---
+# --- 📢 CORPORATE RADAR ENGINE (New) ---
+@st.cache_data(ttl=1200)
+def get_corporate_news(ticker_name):
+    query = f"{ticker_name} quarterly results merger acquisition deal profit"
+    url = f"https://html.duckduckgo.com/html/?q={query}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    news_items = []
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        results = soup.find_all('div', class_='result__body')[:4]
+        
+        for res in results:
+            title_tag = res.find('a', class_='result__a')
+            if title_tag:
+                title = title_tag.text
+                link = title_tag['href']
+                
+                tag = "General"
+                lower_title = title.lower()
+                if "profit" in lower_title or "loss" in lower_title or "q1" in lower_title or "q2" in lower_title or "q3" in lower_title or "result" in lower_title:
+                    tag = "📊 Earnings"
+                elif "merger" in lower_title or "acquisition" in lower_title or "stake" in lower_title or "deal" in lower_title or "buy" in lower_title:
+                    tag = "🤝 M&A / Deal"
+                
+                news_items.append({"Title": title, "Link": link, "Tag": tag})
+    except:
+        return []
+        
+    return news_items
+
+# --- 📊 EQUITY ENGINE (Fixed: Overrides & Charts) ---
 @st.cache_data(ttl=300)
 def get_stock_fundamentals(ticker):
     try:
-        # Standardize Ticker
         symbol = ticker.upper() if ticker.endswith(".NS") else f"{ticker.upper()}.NS"
         stock = yf.Ticker(symbol)
         
-        # 1. Price Data (Standard Fetch)
+        # 1. Price Data - Fix Date Sorting
         hist = stock.history(period="1y")
         if hist.empty: return None
+        
+        # Ensure index is datetime for correct chart sorting
+        hist.index = pd.to_datetime(hist.index)
         
         current = hist['Close'].iloc[-1]
         prev = hist['Close'].iloc[-2]
         change_pct = ((current - prev) / prev) * 100
         
-        # 2. Fetch API Data
         fi = stock.fast_info
         info = {}
-        try:
-            info = stock.info
-        except:
-            pass
+        try: info = stock.info
+        except: pass
 
-        # 3. 🛡️ MANUAL OVERRIDE BLOCK 
-        # Add tickers here that show "N/A" in the dashboard
+        # 3. 🛡️ MANUAL OVERRIDE BLOCK (The N/A Fixer)
         overrides = {
             "TMCV.NS": {
                 "Sector": "Commercial Vehicles",
-                "PE": "N/A (Loss Making)", 
-                "DebtToEquity": 0.57,
-                "ROE": -0.098,
-                "Summary": "Tata Motors Limited (CV) is India's largest manufacturer of commercial vehicles. Demerged from the passenger business in Oct 2025."
+                "PE": "N/A (Loss)", "DebtToEquity": 0.57, "ROE": -0.098,
+                "Summary": "Tata Motors CV is India's market leader in trucks and buses, recently demerged from the PV business."
             },
             "TATASTEEL.NS": {
-                "Sector": "Basic Materials (Iron & Steel)",
-                "PE": 34.7,
-                "DebtToEquity": 1.01, 
-                "ROE": 0.072, # ~7.2%
-                "Div Yield": 1.90,
-                "Summary": "Tata Steel is one of the world's most geographically diversified steel producers with operations in 26 countries."
+                "Sector": "Basic Materials", "PE": 34.7, "DebtToEquity": 1.01, "ROE": 0.072, "Div Yield": 1.90,
+                "Summary": "Tata Steel is a global steel giant with operations in 26 countries."
             },
             "RELIANCE.NS": {
-                "Sector": "Energy / Diversified Conglomerate",
-                "PE": 23.8,
-                "DebtToEquity": 0.42,
-                "ROE": 0.094, 
-                "Div Yield": 0.38,
-                "Summary": "India's largest private sector corporation with dominance in O2C (Oil-to-Chemicals), Telecom (Jio), and Retail. Recently focused on New Energy and AI expansion."
+                "Sector": "Energy / Conglomerate", "PE": 23.8, "DebtToEquity": 0.42, "ROE": 0.094, "Div Yield": 0.38,
+                "Summary": "India's largest company by market cap, leading in Oil-to-Chemicals, Telecom (Jio), and Retail."
             },
             "SUZLON.NS": {
-                "Sector": "Renewable Energy (Wind)",
-                "PE": 65.4, # High due to growth pricing
-                "DebtToEquity": 0.05, 
-                "ROE": 0.185, 
-                "Div Yield": 0.00,
-                "Summary": "One of the world's leading renewable energy solutions providers. The company has recently turned profitable after a major debt restructuring."
+                "Sector": "Renewable Energy", "PE": 65.4, "DebtToEquity": 0.05, "ROE": 0.185, "Div Yield": 0.00,
+                "Summary": "A leading wind turbine manufacturer that has recently completed a successful financial turnaround."
+            },
+            "ZOMATO.NS": {
+                "Sector": "Tech / Food Delivery", "PE": 112.5, "DebtToEquity": 0.00, "ROE": 0.045, "Div Yield": 0.00,
+                "Summary": "India's leading food delivery and quick-commerce (Blinkit) platform."
             }
         }
 
-        # 4. Construct Metrics (Merge API data with Overrides)
         specific_override = overrides.get(symbol, {})
 
+        # 4. Metric Construction
         metrics = {
             "Market Cap": specific_override.get("Market Cap", info.get("marketCap", fi.market_cap)),
             "PE": specific_override.get("PE", info.get("trailingPE", "N/A")),
             "Div Yield": specific_override.get("Div Yield", info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0),
-            "52W High": info.get("fiftyTwoWeekHigh", fi.year_high),
             "DebtToEquity": specific_override.get("DebtToEquity", info.get("debtToEquity", "N/A")),
             "ROE": specific_override.get("ROE", info.get("returnOnEquity", 0)),
             "Sector": specific_override.get("Sector", info.get("sector", "N/A")),
@@ -235,7 +260,6 @@ def get_ipo_data():
             
         new_df['GMP_Val'] = new_df['GMP'].apply(clean)
         new_df['Price_Val'] = new_df['Price'].apply(clean)
-        
         new_df['Gain%'] = new_df.apply(lambda row: (row['GMP_Val'] / row['Price_Val'] * 100) if row['Price_Val'] > 0 else 0.0, axis=1)
         
         return new_df.sort_values('GMP_Val', ascending=False)
@@ -260,9 +284,7 @@ def get_mf_deep_dive(code):
             return 0.0
 
         returns = { 
-            "1Y": get_ret(365), 
-            "3Y": get_ret(365*3), 
-            "5Y": get_ret(365*5),
+            "1Y": get_ret(365), "3Y": get_ret(365*3), "5Y": get_ret(365*5),
             "All": ((curr_nav - df['nav'].iloc[0]) / df['nav'].iloc[0]) * 100 
         }
         return df, details, returns
@@ -283,8 +305,10 @@ if page == "📈 Equity Research":
         if st.button("Generate Report", type="primary"):
             with st.spinner(f"Fetching Intelligence for {ticker}..."):
                 data = get_stock_fundamentals(ticker)
-                # FORCE SENTIMENT FETCH
-                sentiment = get_sentiment_report(f"{ticker} stock")
+                # Broad search for better hits
+                sentiment = get_sentiment_report(f"{ticker} stock news")
+                # Fetch Corporate Actions
+                corp_news = get_corporate_news(ticker)
             
             if data:
                 m = data['metrics']
@@ -292,11 +316,11 @@ if page == "📈 Equity Research":
                 c1.metric(f"{search}", f"₹{data['price']:,.2f}", f"{data['change']:+.2f}%")
                 c2.metric("Sector", m.get('Sector', 'N/A'))
                 
-                # TABS (Swapped: Sentiment First)
+                # TABS (Sentiment First)
                 tab_sent, tab_fund = st.tabs(["🧠 Social Sentiment & Buzz", "📊 Fundamentals"])
                 
-                # 1. SENTIMENT TAB (First)
                 with tab_sent:
+                    # 1. SENTIMENT
                     if sentiment:
                         sc1, sc2 = st.columns([1,2])
                         with sc1:
@@ -304,18 +328,28 @@ if page == "📈 Equity Research":
                             st.progress(sentiment['score']/100)
                             st.caption(f"**Rating:** {sentiment['rating']}")
                         with sc2:
-                            st.write(f"**Social Buzz & News Feed ({sentiment['count']} Sources):**")
+                            st.write(f"**Social Buzz ({sentiment['count']} Sources):**")
                             for r in sentiment['data'].head(5).to_dict('records'):
                                 st.markdown(f"• **{r['Source']}**: [{r['Title']}]({r['Link']})")
                     else:
-                        st.warning("No social buzz detected for this stock right now.")
+                        st.warning("No recent social buzz. Market is quiet on this stock.")
 
-                # 2. FUNDAMENTALS TAB (Second)
+                    # 2. CORPORATE RADAR (New Section)
+                    st.markdown("---")
+                    st.subheader("📢 Corporate Radar: Deals & Earnings")
+                    if corp_news:
+                        nc1, nc2 = st.columns(2)
+                        for i, item in enumerate(corp_news):
+                            with (nc1 if i % 2 == 0 else nc2):
+                                st.info(f"**{item['Tag']}**")
+                                st.markdown(f"[{item['Title']}]({item['Link']})")
+                    else:
+                        st.caption("No major mergers, acquisitions, or result announcements in the last 7 days.")
+
                 with tab_fund:
-                    # Robust display: Check if data is 'N/A' before formatting
+                    # ROBUST FUNDAMENTALS
                     fc1, fc2, fc3, fc4 = st.columns(4)
                     
-                    # Safe formatting helpers
                     def safe_fmt(val, is_pct=False):
                         if isinstance(val, (int, float)):
                             return f"{val:.2f}%" if is_pct else f"{val:.2f}"
@@ -355,21 +389,18 @@ elif page == "🚀 IPO Intelligence":
                 
                 gc1, gc2 = st.columns(2)
                 listing_price = row['Price_Val'] + row['GMP_Val']
-                
-                # Logic: Don't show 0.0% if GMP is missing
                 gain_display = f"{row['Gain%']:.1f}%"
-                if row['GMP_Val'] == 0:
-                    gain_display = "No GMP Trend Yet"
+                if row['GMP_Val'] == 0: gain_display = "No GMP Trend Yet"
                 
                 gc1.metric("Expected Listing Price", f"₹{listing_price}")
                 gc2.metric("Listing Gain", gain_display)
                 
                 st.markdown("---")
                 
-                # IPO SENTIMENT
                 st.subheader("🧠 IPO Sentiment Rating")
                 with st.spinner("Analyzing Market Mood..."):
-                    ipo_sent = get_sentiment_report(f"{sel_ipo} IPO")
+                    # Broaden search for IPOs
+                    ipo_sent = get_sentiment_report(f"{sel_ipo} IPO GMP review")
                 
                 if ipo_sent:
                     ic1, ic2 = st.columns([1,2])
@@ -382,7 +413,7 @@ elif page == "🚀 IPO Intelligence":
                         for r in ipo_sent['data'].head(3).to_dict('records'):
                             st.markdown(f"• **{r['Source']}**: [{r['Title']}]({r['Link']})")
                 else:
-                    st.info("No active sentiment data found.")
+                    st.info("No active chatter found. This IPO might be under the radar.")
 
                 st.markdown("---")
                 st.subheader("🏢 Peer Comparison")
@@ -411,15 +442,16 @@ elif page == "💰 Mutual Funds":
     with col1:
         fund_a = st.selectbox("Fund A", all_funds, index=None, placeholder="Select Fund A", key="fa")
     with col2:
-        fund_b = st.selectbox("Fund B (Optional)", all_funds, index=None, placeholder="Select Fund B (for comparison)", key="fb")
+        fund_b = st.selectbox("Fund B (Optional)", all_funds, index=None, placeholder="Select Fund B", key="fb")
         
     if st.button("Analyze / Compare", type="primary"):
         if fund_a:
             code_a = list(schemes.keys())[list(schemes.values()).index(fund_a)]
             with st.spinner("Fetching Data..."):
                 df_a, det_a, ret_a = get_mf_deep_dive(code_a)
-                # Fetch Sentiment for Fund A
-                sent_a = get_sentiment_report(f"{det_a['fund_house']} Mutual Fund")
+                # Cleaning name for better sentiment hits
+                clean_name = det_a['fund_house']
+                sent_a = get_sentiment_report(f"{clean_name} Mutual Fund news")
                 
                 if fund_b: # COMPARE MODE
                     code_b = list(schemes.keys())[list(schemes.values()).index(fund_b)]
@@ -427,14 +459,12 @@ elif page == "💰 Mutual Funds":
                     
                     if df_a is not None and df_b is not None:
                         st.subheader("⚔️ Head-to-Head Comparison")
-                        
                         comp_data = {
                             "Metric": ["1Y Return", "3Y Return", "5Y Return", "All Time", "Risk", "Category"],
                             "Fund A": [f"{ret_a['1Y']:.2f}%", f"{ret_a['3Y']:.2f}%", f"{ret_a['5Y']:.2f}%", f"{ret_a['All']:.2f}%", det_a.get('scheme_risk', 'N/A'), det_a.get('scheme_category', 'N/A')],
                             "Fund B": [f"{ret_b['1Y']:.2f}%", f"{ret_b['3Y']:.2f}%", f"{ret_b['5Y']:.2f}%", f"{ret_b['All']:.2f}%", det_b.get('scheme_risk', 'N/A'), det_b.get('scheme_category', 'N/A')]
                         }
                         st.table(pd.DataFrame(comp_data))
-                        
                         st.subheader("Performance Chart (3 Years)")
                         merged = pd.merge(df_a[['date','nav']], df_b[['date','nav']], on='date', suffixes=('_A', '_B'))
                         st.line_chart(merged.set_index('date'))
@@ -442,8 +472,6 @@ elif page == "💰 Mutual Funds":
                 else: # SINGLE MODE
                     if df_a is not None:
                         st.subheader(f"📈 Performance: {det_a.get('scheme_name')}")
-                        
-                        # 1. RETURNS TABLE (RESTORED HERE)
                         rc1, rc2, rc3, rc4 = st.columns(4)
                         rc1.metric("1Y Return", f"{ret_a['1Y']:.2f}%")
                         rc2.metric("3Y Return", f"{ret_a['3Y']:.2f}%")
@@ -453,7 +481,6 @@ elif page == "💰 Mutual Funds":
                         st.line_chart(df_a.set_index('date')['nav'])
                         st.write(f"**Category:** {det_a.get('scheme_category', 'N/A')}")
                         
-                        # 2. SENTIMENT SECTION (RESTORED HERE)
                         st.markdown("---")
                         st.subheader(f"📰 News & Sentiment: {det_a.get('fund_house')}")
                         
@@ -468,4 +495,4 @@ elif page == "💰 Mutual Funds":
                                 for r in sent_a['data'].head(3).to_dict('records'):
                                     st.markdown(f"• **{r['Source']}**: [{r['Title']}]({r['Link']})")
                         else:
-                            st.info("No active sentiment data found for this Fund House.")
+                            st.info(f"No active news found for {det_a.get('fund_house')}.")
